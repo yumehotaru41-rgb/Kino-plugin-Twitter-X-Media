@@ -341,7 +341,18 @@ async function bookmarksRaw(cursor, options) {
     }
   }
 
-  if (!r.ok) failStatus(r.status, "bookmarks");
+  if (!r.ok) {
+    if (r.status === 400 || r.status === 404 || r.status === 422) {
+      throw kino.error("unavailable", "bookmarks " + r.status + " id viejo", {
+        userMessage:
+          "X rechazó la consulta de guardados: cambió el identificador de su API. " +
+          "En tu computador abre x.com/i/bookmarks con F12 ▸ Red, busca la petición «Bookmarks» y copia " +
+          "el identificador que va en la dirección /i/api/graphql/…/Bookmarks; pégalo en " +
+          "Ajustes ▸ X Guardados ▸ Identificador de la API."
+      });
+    }
+    failStatus(r.status, "bookmarks");
+  }
 
   var json;
   try {
@@ -577,7 +588,11 @@ async function bookmarksPage(cursor, options) {
   if (!timeline) {
     var detail = json && json.errors ? JSON.stringify(json.errors).slice(0, 150) : "sin timeline";
     throw kino.error("unavailable", "bookmarks " + detail, {
-      userMessage: "X no devolvió tus guardados. Si acabas de entrar, vuelve a iniciar sesión."
+      userMessage:
+        "X no devolvió tus guardados (" + detail + "). " +
+        "Si acabas de entrar, vuelve a iniciar sesión. Si el aviso habla de «features» o «queryId», " +
+        "copia el identificador nuevo de la petición «Bookmarks» de x.com y pégalo en " +
+        "Ajustes ▸ X Guardados ▸ Identificador de la API."
     });
   }
 

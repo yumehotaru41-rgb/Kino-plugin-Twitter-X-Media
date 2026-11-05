@@ -616,7 +616,7 @@ function itemOf(tweet, media, index, tweetId, handle) {
     id: index === 0 ? tweetId : tweetId + "-" + index,
     ref: "t:" + tweetId + ":" + index,
     title: title,
-    kind: "movie",
+    kind: "live", // canal: Kino nunca lo guarda en la biblioteca ni en «Continuar viendo»
     badges: ["X"]
   };
   if (poster) {
@@ -628,10 +628,6 @@ function itemOf(tweet, media, index, tweetId, handle) {
   if (year) item.year = year;
   var lang = tweet && tweet.legacy && tweet.legacy.lang;
   if (typeof lang === "string" && lang) item.lang = lang.slice(0, 20);
-  if (record.d) {
-    var minutes = Math.round(record.d / 60000);
-    item.runtimeMinutes = Math.min(1000, Math.max(1, minutes));
-  }
   if (quality) item.quality = quality;
   return item;
 }

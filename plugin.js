@@ -1,4 +1,4 @@
-// X Guardados — los videos de tus «Elementos guardados» de X (Twitter) dentro de Kino.
+// Twittube — los videos de tus «Elementos guardados» de X (Twitter) dentro de Kino.
 //
 // apiVersion 14 (Kino 0.9.74). La sesión se inicia dentro de Kino con una ventana de navegador
 // visible (enhancements["20"].visualBrowser, Kino 0.9.81) o pegando las cookies a mano.
@@ -21,6 +21,9 @@ const BEARER =
 
 // Semilla conocida de la consulta Bookmarks; si X la rota, discover() trae la buena.
 const SEED_BOOKMARKS = "Glt3WAwBvNSPD-n_sqmX_A";
+
+// Semilla conocida de la consulta del Inicio (HomeTimeline); si X la rota, discover() trae la buena.
+const SEED_HOME = "c-CzHF1LboFilMpsx4ZCrQ";
 
 const OPS_KEY = "ops:v1";
 const MEDIA_KEY = "media:v1";
@@ -53,7 +56,11 @@ const FEATURES = {
   rweb_video_timestamps_enabled: true,
   longform_notetweets_rich_text_read_enabled: true,
   longform_notetweets_inline_media_enabled: true,
-  responsive_web_enhance_cards_enabled: false
+  responsive_web_enhance_cards_enabled: false,
+  tweetypie_unmention_optimization_enabled: true,
+  responsive_web_media_download_video_enabled: true,
+  hidden_profile_subscriptions_enabled: true,
+  subscriptions_verification_info_enabled: true
 };
 
 const FIELD_TOGGLES = {
@@ -117,7 +124,7 @@ function failStatus(status, what) {
   var detail = what + " " + status;
   if (status === 401 || status === 403) {
     throw kino.error("auth_required", detail, {
-      userMessage: "La sesión de X venció. Inicia sesión otra vez en Ajustes ▸ X Guardados."
+      userMessage: "La sesión de X venció. Inicia sesión otra vez en Ajustes ▸ Twittube."
     });
   }
   if (status === 429) {
@@ -155,7 +162,7 @@ async function xget(url, options) {
 function requireSession() {
   if (!signedIn()) {
     throw kino.error("auth_required", "sin sesión", {
-      userMessage: "Inicia sesión con tu cuenta de X: Ajustes ▸ X Guardados."
+      userMessage: "Inicia sesión con tu cuenta de X: Ajustes ▸ Twittube."
     });
   }
 }
@@ -239,6 +246,12 @@ function queryId() {
   return savedOps() || { Bookmarks: SEED_BOOKMARKS };
 }
 
+function homeId() {
+  var ops = savedOps();
+  if (ops && typeof ops.HomeTimeline === "string" && ops.HomeTimeline) return ops.HomeTimeline;
+  return SEED_HOME;
+}
+
 function scanForOperation(body, name) {
   // El nombre de la operación va pegado a su queryId en la tabla de la web de X.
   var markers = ['operationName:"' + name + '"', 'operationName": "' + name + '"'];
@@ -257,7 +270,7 @@ function scanForOperation(body, name) {
 // X no publica su identificador de consulta: se lee de los archivos de su propia web. Es de mejor
 // esfuerzo — si falla, queda la semilla y el campo avanzado de los ajustes.
 async function discover() {
-  var found = { Bookmarks: "" };
+  var found = { Bookmarks: "", HomeTimeline: "" };
   var started = Date.now();
   var html = "";
   try {
@@ -269,6 +282,13 @@ async function discover() {
     if (page.ok) html = page.text();
   } catch (e) {
     kino.log("discover: html", e && e.code);
+  }
+
+  function scan(text) {
+    var idB = scanForOperation(text, "Bookmarks");
+    if (idB) found.Bookmarks = idB;
+    var idH = scanForOperation(text, "HomeTimeline");
+    if (idH) found.HomeTimeline = idH;
   }
 
   // 1) Los .js que la propia página enlaza (main y los demás).
@@ -296,55 +316,60 @@ async function discover() {
       continue;
     }
     bodies.push(body);
-    var id = scanForOperation(body, "Bookmarks");
-    if (id) {
-      found.Bookmarks = id;
-      break;
-    }
+    scan(body);
+    if (found.Bookmarks && found.HomeTimeline) break;
   }
 
-  // 2) Hoy la consulta Bookmarks no está en main: vive en un paquete que la página carga
-  //    aparte (shared~bundle.BookmarkFolders~bundle.Bookmarks). El runtime de webpack del
-  //    propio main trae el nombre de ese paquete con su número y, en otra tabla, su hash;
-  //    con los dos se arma la dirección del paquete.
-  if (!found.Bookmarks) {
-    for (var b = 0; b < bodies.length && Date.now() - started < 20000; b++) {
-      var nameMatch = /(\d+):"(shared~bundle\.BookmarkFolders~bundle\.Bookmarks)"/.exec(bodies[b]);
-      if (!nameMatch) continue;
-      var hashRe = new RegExp(nameMatch[1] + ':"([0-9a-f]{8,24})"');
-      var hashMatch = hashRe.exec(bodies[b]);
-      if (!hashMatch) continue;
-      var bundle =
-        "https://abs.twimg.com/responsive-web/client-web/" + nameMatch[2] + "." + hashMatch[1] + "a.js";
-      try {
-        var br = await kino.fetch(bundle, {
-          headers: { accept: "*/*" },
-          timeoutMs: 8000,
-          cookies: false,
-          maxBytes: 1500000
-        });
-        if (!br.ok) continue;
-        var bundleId = scanForOperation(br.text(), "Bookmarks");
-        if (bundleId) {
-          found.Bookmarks = bundleId;
-          break;
+  // 2) X sacó estas consultas de main: viven en paquetes que la página carga
+  //    aparte. El runtime de webpack del propio main trae el nombre de cada
+  //    paquete con su número y, en otra tabla, su hash; con los dos se arma
+  //    la dirección del paquete.
+  var lazy = [
+    "shared~bundle.BookmarkFolders~bundle.Bookmarks",
+    "shared~bundle.Compose~bundle.HomeTimeline~bundle.LoggedInMain",
+    "bundle.HomeTimeline"
+  ];
+  if (!found.Bookmarks || !found.HomeTimeline) {
+    for (var n = 0; n < lazy.length && Date.now() - started < 24000; n++) {
+      var escaped = lazy[n].replace(/[.~]/g, "\\$&");
+      for (var b = 0; b < bodies.length; b++) {
+        var nameMatch = new RegExp("(\\d+):\"" + escaped + "\"").exec(bodies[b]);
+        if (!nameMatch) continue;
+        var hashRe = new RegExp(nameMatch[1] + ':"([0-9a-f]{8,24})"');
+        var hashMatch = hashRe.exec(bodies[b]);
+        if (!hashMatch) continue;
+        var bundle =
+          "https://abs.twimg.com/responsive-web/client-web/" + lazy[n] + "." + hashMatch[1] + "a.js";
+        try {
+          var br = await kino.fetch(bundle, {
+            headers: { accept: "*/*" },
+            timeoutMs: 8000,
+            cookies: false,
+            maxBytes: 1500000
+          });
+          if (!br.ok) continue;
+          scan(br.text());
+        } catch (e) {
+          continue;
         }
-      } catch (e) {
-        continue;
       }
+      if (found.Bookmarks && found.HomeTimeline) break;
     }
   }
 
-  if (found.Bookmarks) {
+  if (found.Bookmarks || found.HomeTimeline) {
     try {
-      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: found.Bookmarks, at: Date.now() }), {
+      var prev = savedOps() || {};
+      if (found.Bookmarks) prev.Bookmarks = found.Bookmarks;
+      if (found.HomeTimeline) prev.HomeTimeline = found.HomeTimeline;
+      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: prev.Bookmarks, HomeTimeline: prev.HomeTimeline, at: Date.now() }), {
         ttlMs: 7 * 24 * 60 * 60 * 1000
       });
     } catch (e) {
       /* sin caché igual sirve para esta llamada */
     }
   }
-  kino.log("discover:", found.Bookmarks ? "encontrado" : "sin resultado");
+  kino.log("discover:", found.Bookmarks || found.HomeTimeline ? "encontrado" : "sin resultado");
   return found;
 }
 
@@ -383,7 +408,7 @@ async function bookmarksRaw(cursor, options) {
           "X rechazó la consulta de guardados: cambió el identificador de su API. " +
           "En tu computador abre x.com/i/bookmarks con F12 ▸ Red, busca la petición «Bookmarks» y copia " +
           "el identificador que va en la dirección /i/api/graphql/…/Bookmarks; pégalo en " +
-          "Ajustes ▸ X Guardados ▸ Identificador de la API."
+          "Ajustes ▸ Twittube ▸ Identificador de la API."
       });
     }
     failStatus(r.status, "bookmarks");
@@ -411,9 +436,10 @@ function timelineOf(json) {
     seen++;
     var node = stack.pop();
     if (!node || typeof node !== "object") continue;
-    var timeline = node.timeline;
-    if (timeline && timeline.instructions && typeof timeline.instructions.length === "number") {
-      return timeline;
+    // Vale para los guardados (…timeline.instructions) y para el Inicio
+    // (…home.home_timeline_urt.instructions): cualquier nodo con «instructions».
+    if (node.instructions && typeof node.instructions.length === "number") {
+      return node;
     }
     for (var key in node) {
       var value = node[key];
@@ -617,17 +643,16 @@ function itemOf(tweet, media, index, tweetId, handle) {
 // El último @usuario que apareció en una lista; sirve de respaldo para la línea de estado.
 var lastSeenHandle = "";
 
-async function bookmarksPage(cursor, options) {
-  var json = await bookmarksRaw(cursor, options);
+function parsePage(json) {
   var timeline = timelineOf(json);
   if (!timeline) {
     var detail = json && json.errors ? JSON.stringify(json.errors).slice(0, 150) : "sin timeline";
-    throw kino.error("unavailable", "bookmarks " + detail, {
+    throw kino.error("unavailable", "lista " + detail, {
       userMessage:
-        "X no devolvió tus guardados (" + detail + "). " +
+        "X no devolvió la lista (" + detail + "). " +
         "Si acabas de entrar, vuelve a iniciar sesión. Si el aviso habla de «features» o «queryId», " +
         "copia el identificador nuevo de la petición «Bookmarks» de x.com y pégalo en " +
-        "Ajustes ▸ X Guardados ▸ Identificador de la API."
+        "Ajustes ▸ Twittube ▸ Identificador de la API."
     });
   }
 
@@ -655,15 +680,15 @@ async function bookmarksPage(cursor, options) {
       if (handle && !lastSeenHandle) lastSeenHandle = handle;
       var media = mediaOf(tweet);
       var index = 0;
-      for (var m = 0; m < media.length; m++) {
-        var record = videoRecord(media[m]);
+      for (var mm = 0; mm < media.length; mm++) {
+        var record = videoRecord(media[mm]);
         if (!record) continue;
         var key = tweetId + ":" + index;
         if (!cache[key]) {
           cache[key] = record;
           dirty = true;
         }
-        var item = itemOf(tweet, media[m], index, tweetId, handle);
+        var item = itemOf(tweet, media[mm], index, tweetId, handle);
         if (item && !seen[item.id]) {
           seen[item.id] = true;
           items.push(item);
@@ -678,33 +703,131 @@ async function bookmarksPage(cursor, options) {
   return { items: items, next: next };
 }
 
+async function bookmarksPage(cursor, options) {
+  var json = await bookmarksRaw(cursor, options);
+  return parsePage(json);
+}
+
 // ---------------------------------------------------------------------------
-// Las funciones que Kino llama
+// El Inicio de X («Para ti»): la misma consulta que la web, solo con videos
 // ---------------------------------------------------------------------------
+
+async function timelineRaw(cursor, options) {
+  var opts = options || {};
+  var id = homeId();
+  var variables = { count: opts.count || 20, includePromotedContent: true };
+  if (cursor) variables.cursor = cursor;
+  var query =
+    "?variables=" +
+    encodeURIComponent(JSON.stringify(variables)) +
+    "&features=" +
+    encodeURIComponent(JSON.stringify(FEATURES));
+
+  var r = await xget(X + "/i/api/graphql/" + id + "/HomeTimeline" + query, {
+    timeoutMs: opts.timeoutMs || 15000
+  });
+
+  // Identificador viejo: se descubre el nuevo y se repite.
+  if (r.status === 400 || r.status === 404 || r.status === 422) {
+    var next = await discover();
+    if (next.HomeTimeline && next.HomeTimeline !== id) {
+      id = next.HomeTimeline;
+      r = await xget(X + "/i/api/graphql/" + id + "/HomeTimeline" + query, {
+        timeoutMs: opts.timeoutMs || 15000
+      });
+    }
+  }
+
+  // La web de X manda el Inicio por POST con un cuerpo JSON: si el GET no
+  // sirve, se prueba por POST antes de rendirse.
+  if (!r.ok && (r.status === 400 || r.status === 405 || r.status === 422)) {
+    try {
+      var body = {
+        queryId: id,
+        operationName: "HomeTimeline",
+        variables: variables,
+        features: FEATURES
+      };
+      r = await kino.fetch(X + "/i/api/graphql/" + id + "/HomeTimeline", {
+        method: "POST",
+        body: { json: body },
+        headers: jsonHeaders(),
+        timeoutMs: opts.timeoutMs || 15000,
+        cookies: false,
+        redirect: "follow"
+      });
+    } catch (e) {
+      kino.log("timeline post:", e && e.code);
+    }
+  }
+
+  if (!r.ok) {
+    throw kino.error("unavailable", "timeline " + r.status, {
+      userMessage:
+        "X no dio el Inicio ahora (código " + r.status + "). Tus guardados siguen funcionando."
+    });
+  }
+
+  var json;
+  try {
+    json = r.json();
+  } catch (e) {
+    throw kino.error("unavailable", "timeline json", {
+      userMessage: "El Inicio de X devolvió algo que no se entiende. Inténtalo más tarde."
+    });
+  }
+  return json;
+}
+
+async function timelinePage(cursor, options) {
+  var json = await timelineRaw(cursor, options);
+  return parsePage(json);
+}
 
 export async function home() {
   requireSession();
+  var rows = [];
+
   var page = await bookmarksPage(null, { count: 20, timeoutMs: 12000 });
-  if (!page.items.length) return [];
-  var handle = cachedAccount();
-  var title = handle ? "Tus guardados · @" + handle : "Tus videos guardados";
-  return [
-    {
+  if (page.items.length) {
+    var handle = cachedAccount();
+    rows.push({
       id: "guardados",
-      title: title,
+      title: handle ? "Twittube · Guardados de @" + handle : "Twittube · Tus videos guardados",
       ref: "bm",
       genre: "entretenimiento",
       items: page.items
+    });
+  }
+
+  // La fila del Inicio es un extra: si X la rechaza, no se pierden los guardados.
+  try {
+    var tl = await timelinePage(null, { count: 20, timeoutMs: 10000 });
+    if (tl.items.length) {
+      rows.unshift({
+        id: "inicio",
+        title: "Twittube · Inicio (Para ti)",
+        ref: "tl",
+        genre: "entretenimiento",
+        items: tl.items
+      });
     }
-  ];
+  } catch (e) {
+    kino.log("inicio:", e && e.code);
+  }
+
+  return rows;
 }
 
 export async function browse(ref, cursor) {
   requireSession();
-  if (ref !== "bm" && ref !== "guardados") {
+  var isHome = ref === "tl" || ref === "inicio";
+  if (!isHome && ref !== "bm" && ref !== "guardados") {
     throw kino.error("not_found", "ref " + String(ref).slice(0, 40));
   }
-  var page = await bookmarksPage(cursor || null, { count: 40, timeoutMs: 14000 });
+  var page = isHome
+    ? await timelinePage(cursor || null, { count: 20, timeoutMs: 14000 })
+    : await bookmarksPage(cursor || null, { count: 40, timeoutMs: 14000 });
   var answer = { items: page.items };
   if (page.next) answer.next = page.next;
   return answer;
@@ -960,4 +1083,5 @@ export async function validateSettings(values) {
   }
   return null;
 }
+
 

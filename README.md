@@ -1,4 +1,4 @@
-# X Guardados — un plugin de Kino para tus videos guardados de X (Twitter)
+# Twittube — un plugin de Kino para tus videos guardados de X (Twitter)
 
 Este plugin convierte los **videos que guardaste en X** («Elementos guardados» / Bookmarks) en
 títulos de Kino: aparecen en una fila del Inicio, se abren en el reproductor de Kino, guardan el
@@ -26,7 +26,7 @@ con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no pue
 
 ## Iniciar sesión
 
-**Forma 1 — dentro de Kino (recomendada).** Ajustes ▸ **X Guardados** ▸ **Iniciar sesión en X**.
+**Forma 1 — dentro de Kino (recomendada).** Ajustes ▸ **Twittube** ▸ **Iniciar sesión en X**.
 Se abre la ventana de X; entra con tu cuenta y espera: la ventana se cierra sola cuando ya existen
 las cookies de sesión, y Kino las guarda cifradas en el ajuste de sesión. La línea **Sesión** pasa a
 «Conectado como @tuusuario».
@@ -104,3 +104,4 @@ node sdk/run.mjs . home
 `auth_required`, que es lo esperado. El banco de pruebas de este repositorio (`.dev/test.mjs`, fuera
 del plugin publicado) corre `home`, `browse`, `search`, `resolve`, `action`, `settingsStatus` y
 `validateSettings` contra un `kino` falso, sin red.
+

@@ -20,7 +20,7 @@ const BEARER =
   "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
 // Semilla conocida de la consulta Bookmarks; si X la rota, discover() trae la buena.
-const SEED_BOOKMARKS = "kmM6bdq5O2wqhyrVLK9hKw";
+const SEED_BOOKMARKS = "Glt3WAwBvNSPD-n_sqmX_A";
 
 const OPS_KEY = "ops:v1";
 const MEDIA_KEY = "media:v1";
@@ -271,6 +271,7 @@ async function discover() {
     kino.log("discover: html", e && e.code);
   }
 
+  // 1) Los .js que la propia página enlaza (main y los demás).
   var urls = [];
   var re = /https:\/\/abs\.twimg\.com\/[A-Za-z0-9._~\-\/]+\.js/g;
   var m;
@@ -278,25 +279,59 @@ async function discover() {
     if (urls.indexOf(m[0]) < 0 && urls.length < 6) urls.push(m[0]);
   }
 
+  var bodies = [];
   for (var i = 0; i < urls.length; i++) {
-    if (Date.now() - started > 14000) break;
+    if (Date.now() - started > 12000) break;
     var body = "";
     try {
       var r = await kino.fetch(urls[i], {
         headers: { accept: "*/*" },
         timeoutMs: 8000,
         cookies: false,
-        maxBytes: 1200000
+        maxBytes: 1500000
       });
       if (!r.ok) continue;
       body = r.text();
     } catch (e) {
       continue;
     }
+    bodies.push(body);
     var id = scanForOperation(body, "Bookmarks");
     if (id) {
       found.Bookmarks = id;
       break;
+    }
+  }
+
+  // 2) Hoy la consulta Bookmarks no está en main: vive en un paquete que la página carga
+  //    aparte (shared~bundle.BookmarkFolders~bundle.Bookmarks). El runtime de webpack del
+  //    propio main trae el nombre de ese paquete con su número y, en otra tabla, su hash;
+  //    con los dos se arma la dirección del paquete.
+  if (!found.Bookmarks) {
+    for (var b = 0; b < bodies.length && Date.now() - started < 20000; b++) {
+      var nameMatch = /(\d+):"(shared~bundle\.BookmarkFolders~bundle\.Bookmarks)"/.exec(bodies[b]);
+      if (!nameMatch) continue;
+      var hashRe = new RegExp(nameMatch[1] + ':"([0-9a-f]{8,24})"');
+      var hashMatch = hashRe.exec(bodies[b]);
+      if (!hashMatch) continue;
+      var bundle =
+        "https://abs.twimg.com/responsive-web/client-web/" + nameMatch[2] + "." + hashMatch[1] + "a.js";
+      try {
+        var br = await kino.fetch(bundle, {
+          headers: { accept: "*/*" },
+          timeoutMs: 8000,
+          cookies: false,
+          maxBytes: 1500000
+        });
+        if (!br.ok) continue;
+        var bundleId = scanForOperation(br.text(), "Bookmarks");
+        if (bundleId) {
+          found.Bookmarks = bundleId;
+          break;
+        }
+      } catch (e) {
+        continue;
+      }
     }
   }
 
@@ -925,3 +960,4 @@ export async function validateSettings(values) {
   }
   return null;
 }
+

@@ -1,7 +1,7 @@
 {
-  "id": "x-guardados",
-  "name": "Twittube",
-  "version": "1.0.3",
+  "id": "twitter-x-media",
+  "name": "Twitter/X Media",
+  "version": "1.0.4",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -24,8 +24,7 @@
     "resolve"
   ],
   "categories": [
-    "movies",
-    "utilities"
+    "adult"
   ],
   "enhancements": {
     "20": {

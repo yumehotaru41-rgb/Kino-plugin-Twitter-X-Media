@@ -1,4 +1,4 @@
-// Twittube — los videos de tus «Elementos guardados» de X (Twitter) dentro de Kino.
+// Twitter/X Media — los videos de tus «Elementos guardados» de X (Twitter) dentro de Kino.
 //
 // apiVersion 14 (Kino 0.9.74). La sesión se inicia dentro de Kino con una ventana de navegador
 // visible (enhancements["20"].visualBrowser, Kino 0.9.81) o pegando las cookies a mano.
@@ -124,7 +124,7 @@ function failStatus(status, what) {
   var detail = what + " " + status;
   if (status === 401 || status === 403) {
     throw kino.error("auth_required", detail, {
-      userMessage: "La sesión de X venció. Inicia sesión otra vez en Ajustes ▸ Twittube."
+      userMessage: "La sesión de X venció. Inicia sesión otra vez en Ajustes ▸ Twitter/X Media."
     });
   }
   if (status === 429) {
@@ -162,7 +162,7 @@ async function xget(url, options) {
 function requireSession() {
   if (!signedIn()) {
     throw kino.error("auth_required", "sin sesión", {
-      userMessage: "Inicia sesión con tu cuenta de X: Ajustes ▸ Twittube."
+      userMessage: "Inicia sesión con tu cuenta de X: Ajustes ▸ Twitter/X Media."
     });
   }
 }
@@ -408,7 +408,7 @@ async function bookmarksRaw(cursor, options) {
           "X rechazó la consulta de guardados: cambió el identificador de su API. " +
           "En tu computador abre x.com/i/bookmarks con F12 ▸ Red, busca la petición «Bookmarks» y copia " +
           "el identificador que va en la dirección /i/api/graphql/…/Bookmarks; pégalo en " +
-          "Ajustes ▸ Twittube ▸ Identificador de la API."
+          "Ajustes ▸ Twitter/X Media ▸ Identificador de la API."
       });
     }
     failStatus(r.status, "bookmarks");
@@ -652,7 +652,7 @@ function parsePage(json) {
         "X no devolvió la lista (" + detail + "). " +
         "Si acabas de entrar, vuelve a iniciar sesión. Si el aviso habla de «features» o «queryId», " +
         "copia el identificador nuevo de la petición «Bookmarks» de x.com y pégalo en " +
-        "Ajustes ▸ Twittube ▸ Identificador de la API."
+        "Ajustes ▸ Twitter/X Media ▸ Identificador de la API."
     });
   }
 
@@ -793,20 +793,41 @@ export async function home() {
     var handle = cachedAccount();
     rows.push({
       id: "guardados",
-      title: handle ? "Twittube · Guardados de @" + handle : "Twittube · Tus videos guardados",
+      title: handle
+        ? "Twitter/X Media · Guardados de @" + handle
+        : "Twitter/X Media · Tus videos guardados",
       ref: "bm",
       genre: "entretenimiento",
       items: page.items
     });
+
+    // Segunda página de guardados como fila propia.
+    if (page.next) {
+      try {
+        var bm2 = await bookmarksPage(page.next, { count: 20, timeoutMs: 10000 });
+        if (bm2.items.length) {
+          rows.push({
+            id: "guardados-2",
+            title: "Twitter/X Media · Más guardados",
+            ref: "bm",
+            genre: "entretenimiento",
+            items: bm2.items
+          });
+        }
+      } catch (e) {
+        kino.log("guardados 2:", e && e.code);
+      }
+    }
   }
 
-  // La fila del Inicio es un extra: si X la rechaza, no se pierden los guardados.
+  // Las filas del Inicio son un extra: si X las rechaza, no se pierden los guardados.
+  var tl = null;
   try {
-    var tl = await timelinePage(null, { count: 20, timeoutMs: 10000 });
+    tl = await timelinePage(null, { count: 20, timeoutMs: 10000 });
     if (tl.items.length) {
       rows.unshift({
         id: "inicio",
-        title: "Twittube · Inicio (Para ti)",
+        title: "Twitter/X Media · Inicio (Para ti)",
         ref: "tl",
         genre: "entretenimiento",
         items: tl.items
@@ -814,6 +835,24 @@ export async function home() {
     }
   } catch (e) {
     kino.log("inicio:", e && e.code);
+  }
+
+  // Segunda página del Inicio como fila propia.
+  if (tl && tl.next) {
+    try {
+      var tl2 = await timelinePage(tl.next, { count: 20, timeoutMs: 10000 });
+      if (tl2.items.length) {
+        rows.splice(1, 0, {
+          id: "inicio-2",
+          title: "Twitter/X Media · Más del Inicio",
+          ref: "tl",
+          genre: "entretenimiento",
+          items: tl2.items
+        });
+      }
+    } catch (e) {
+      kino.log("inicio 2:", e && e.code);
+    }
   }
 
   return rows;

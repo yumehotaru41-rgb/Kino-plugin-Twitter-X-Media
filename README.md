@@ -1,0 +1,106 @@
+# X Guardados — un plugin de Kino para tus videos guardados de X (Twitter)
+
+Este plugin convierte los **videos que guardaste en X** («Elementos guardados» / Bookmarks) en
+títulos de Kino: aparecen en una fila del Inicio, se abren en el reproductor de Kino, guardan el
+progreso y entran en «Continuar viendo» y en la biblioteca como cualquier otro título.
+
+Incluye su **menú de inicio de sesión**: una ventana de X que se abre dentro de Kino para que entres
+con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no puede abrir esa ventana.
+
+## Qué necesitas
+
+| Cosa | Detalle |
+| --- | --- |
+| Kino | 0.9.74 o más nuevo (el plugin declara `apiVersion` 14). |
+| La ventana de inicio de sesión | 0.9.81 o más nuevo, en un teléfono, tableta o Android TV. En un Kino anterior, o en un aparato sin WebView (la app de escritorio), se entra pegando las cookies. |
+| Una cuenta de X | La tuya. El plugin lee **tus** Elementos guardados; no lee los de nadie más. |
+
+## Instalación
+
+1. Publica esta carpeta como un repositorio público de GitHub con el topic `kino-plugin` (así sale en
+   «De la comunidad»), o súbela a cualquier servidor https con su `kino-plugin.json`.
+2. En Kino: **Ajustes ▸ Plugins ▸ Instalar** y escribe `owner/repo` (o pega la URL del
+   `kino-plugin.json`).
+3. Acepta la hoja de consentimiento: el plugin habla con `x.com`, `video.twimg.com` y los demás
+   hosts de X que lista su manifiesto, y puede abrir una ventana web donde inicias sesión.
+
+## Iniciar sesión
+
+**Forma 1 — dentro de Kino (recomendada).** Ajustes ▸ **X Guardados** ▸ **Iniciar sesión en X**.
+Se abre la ventana de X; entra con tu cuenta y espera: la ventana se cierra sola cuando ya existen
+las cookies de sesión, y Kino las guarda cifradas en el ajuste de sesión. La línea **Sesión** pasa a
+«Conectado como @tuusuario».
+
+**Forma 2 — pegando las cookies.** Si el aparato no puede abrir la ventana:
+
+1. En un computador, abre x.com con la sesión iniciada.
+2. F12 ▸ **Application** (Aplicación) ▸ **Cookies** ▸ `https://x.com`.
+3. Copia el valor de `auth_token` y el de `ct0` y pégalos en **Sesión (cookies auth_token y ct0)** así:
+   `auth_token=AAA…; ct0=BBB…`
+4. **Guardar**. Kino comprueba la sesión antes de guardarla; si X la rechaza, te lo dice en el campo.
+
+«Cerrar sesión» borra las cookies del plugin (y del jar de Kino). Son la llave de tu cuenta: no las
+compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus otros aparatos.
+
+## Qué ves en Kino
+
+- **Inicio ▸ Tus videos guardados**: una fila con los videos de tus Elementos guardados (los tuits
+  que no traen video se omiten). Su tarjeta **Ver más** abre la lista completa, paginada.
+- **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
+  ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
+  reproductor.
+- **Búsqueda**: busca por palabras en el texto de tus tuits guardados (recorre hasta tres páginas de
+  guardados por búsqueda).
+- El póster y el fondo salen del fotograma que X publica para cada video; el título, de la primera
+  línea del tuit; la sinopsis, del texto completo.
+
+## Cómo funciona (y sus límites, dichos sin adornos)
+
+- Con tu sesión, el plugin hace la **misma consulta interna que la web de X** para leer Elementos
+  guardados. X no publica esa consulta: no es una API estable ni documentada.
+- X **cambia el identificador de esa consulta** cada tanto. Si eso pasa, el plugin intenta
+  descubrir el nuevo leyendo los archivos JavaScript de la propia web de X (`abs.twimg.com`) y lo
+  guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
+  permite pegarlo a mano.
+- La URL de cada video se guarda en la caché del plugin (hasta 120 videos) para que reproducir no
+  cueste otra petición. «Limpiar la caché de videos» la vacía.
+- Solo videos: los tuits con fotos o solo texto no aparecen. No se pueden descargar (el plugin no
+  declara `download`) y no hay DRM de por medio.
+- Cuentas protegidas: el servicio público de X que se usa como respaldo para una URL suelta no ve
+  esos tuits; en ese caso el plugin recorre tus guardados, que sí funcionan con tu sesión.
+- Límites de X: si abres muchas páginas seguidas, X puede responder 429 y Kino lo mostrará como
+  «demasiadas peticiones». Espera un minuto.
+- Nada de esto es una afiliación con X. Es un cliente personal que lee tu propia cuenta.
+
+## Privacidad
+
+El plugin no tiene servidor propio ni telemetría: no declara `telemetry`, y todo lo que sale del
+aparato va a hosts de X. Las cookies viajan solo a esos hosts, viven en un ajuste `password` de Kino
+(cifrado en el Keystore del aparato y sellado de punta a punta al sincronizarse) y `kino.storage`
+solo guarda el @usuario, el identificador de la consulta y las URLs de tus videos.
+
+## Estructura
+
+```
+kino-plugin.json   manifiesto: hosts, capacidades, ajustes y la ventana de inicio de sesión
+plugin.js          el código: home, browse, search, resolve, settingsStatus, action, validateSettings
+icon.png           ícono cuadrado del plugin
+README.md          esto
+```
+
+## Desarrollo
+
+Con el kit oficial de Kino:
+
+```
+cp -r kino-plugin-sdk/sdk kino-plugin-sdk/contract.json kino-plugin-sdk/kino.d.ts .
+node sdk/validate.mjs .
+node sdk/run.mjs . settingsStatus
+node sdk/run.mjs . action link
+node sdk/run.mjs . home
+```
+
+`run.mjs` necesita una sesión real de X para las llamadas que hablan con x.com; sin ella responde
+`auth_required`, que es lo esperado. El banco de pruebas de este repositorio (`.dev/test.mjs`, fuera
+del plugin publicado) corre `home`, `browse`, `search`, `resolve`, `action`, `settingsStatus` y
+`validateSettings` contra un `kino` falso, sin red.

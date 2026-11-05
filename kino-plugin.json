@@ -1,9 +1,10 @@
 {
   "id": "x-guardados",
   "name": "X Guardados",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 14,
   "entry": "plugin.js",
+  "icon": "icon.png",
   "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados.",
   "color": "#1D9BF0",
   "hosts": [
@@ -16,10 +17,20 @@
     "video.twimg.com",
     "cdn.syndication.twimg.com"
   ],
-  "capabilities": ["home", "browse", "search", "resolve"],
-  "categories": ["movies", "utilities"],
+  "capabilities": [
+    "home",
+    "browse",
+    "search",
+    "resolve"
+  ],
+  "categories": [
+    "movies",
+    "utilities"
+  ],
   "enhancements": {
-    "20": { "visualBrowser": true }
+    "20": {
+      "visualBrowser": true
+    }
   },
   "settings": [
     {
@@ -58,7 +69,7 @@
       "title": "Iniciar sesión en X",
       "titleEn": "Sign in to X",
       "body": "1. Toca «Iniciar sesión en X»: se abre una ventana de X dentro de Kino. Entra con tu cuenta y espera a que se cierre sola. Kino guarda la sesión y el plugin ya ve tus guardados.\n\n2. Si tu aparato no puede abrir esa ventana (un TV sin WebView, o la app de escritorio), pega las cookies a mano: abre x.com en el navegador de tu computador con la sesión iniciada, abre las herramientas del desarrollador (F12) ▸ Application ▸ Cookies ▸ https://x.com, copia los valores de «auth_token» y «ct0» y pégalos en el campo de arriba así: auth_token=AAA…; ct0=BBB… Después toca Guardar.\n\nLas cookies son la llave de tu cuenta: no las compartas. El plugin solo las usa para leer tus Elementos guardados y Kino las guarda cifradas.",
-      "bodyEn": "1. Tap “Sign in to X”: a X window opens inside Kino. Sign in and wait for it to close. Kino saves the session and the plugin can see your bookmarks.\n\n2. If your device can't open that window (a TV without WebView, or the desktop app), paste the cookies by hand: open x.com in your computer's browser while signed in, open the developer tools (F12) ▸ Application ▸ Cookies ▸ https://x.com, copy «auth_token» and «ct0» and paste them above like this: auth_token=AAA…; ct0=BBB… Then tap Save.\n\nCookies are the key to your account: don't share them. The plugin only uses them to read your bookmarks and Kino stores them encrypted."
+      "bodyEn": "1. Tap “Sign in to X”: a X window opens inside Kino. Sign in and wait for it to close. Kino saves the session and the plugin can see your bookmarks.\n\n2. If your device can't open that window (a TV without WebView, or the desktop app), paste the cookies by hand: open x.com in your computer's browser while signed in, open the developer tools (F12) ▸ Application ▸ Cookies ▸ https://x.com, copy «auth_token» and «ct0» and paste them above like this: auth_token=AAA…; ct0=BBB… Then tap Save.\n\nCookies are the key to your account: don't share them. The plugin only uses them to read your Bookmarks and Kino stores them encrypted."
     },
     {
       "key": "abrir",
@@ -88,8 +99,16 @@
       "type": "select",
       "default": "auto",
       "options": [
-        { "value": "auto", "label": "La mejor copia", "labelEn": "Best copy" },
-        { "value": "bajo", "label": "Ahorro de datos", "labelEn": "Data saver" }
+        {
+          "value": "auto",
+          "label": "La mejor copia",
+          "labelEn": "Best copy"
+        },
+        {
+          "value": "bajo",
+          "label": "Ahorro de datos",
+          "labelEn": "Data saver"
+        }
       ]
     },
     {

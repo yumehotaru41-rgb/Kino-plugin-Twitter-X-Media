@@ -619,7 +619,7 @@ function itemOf(tweet, media, index, tweetId, handle) {
     ref: "t:" + tweetId + ":" + index,
     title: title,
     kind: "movie",
-    adult: true // 18+ como el plugin de xHamster: Kino no lo guarda en «Mi biblioteca» ni en «Continuar viendo»
+    adult: true, // 18+ como el plugin de xHamster: Kino no lo guarda en «Mi biblioteca» ni en «Continuar viendo»
     badges: ["X"]
   };
   if (poster) {

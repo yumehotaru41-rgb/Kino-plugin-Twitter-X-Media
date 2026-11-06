@@ -22,13 +22,13 @@ const BEARER =
   "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
 // Semilla conocida de la consulta Bookmarks; si X la rota, discover() trae la buena.
-const SEED_BOOKMARKS = "Glt3WAwBvNSPD-n_sqmX_A";
+const SEED_BOOKMARKS = "fjf5b5Lu82lYMSBRhppK2g";
 
 // Semilla conocida de la consulta del Inicio (HomeTimeline); si X la rota, discover() trae la buena.
 const SEED_HOME = "c-CzHF1LboFilMpsx4ZCrQ";
 
 // La búsqueda de X (SearchTimeline) no tiene semilla fiable: discover() la encuentra en la web de X.
-const SEED_SEARCH = "";
+const SEED_SEARCH = "vLHjqbDv7TPFMBkIIO1nOA";
 
 const OPS_KEY = "ops:v1";
 const MEDIA_KEY = "media:v1";
@@ -73,6 +73,48 @@ const FIELD_TOGGLES = {
   withArticlePlainText: false,
   withGrokAnalyze: false,
   withDisallowedReplyControls: false
+};
+// El juego completo de banderas que la búsqueda de X (SearchTimeline) pide hoy.
+const SEARCH_FEATURES = {
+  articles_preview_enabled: true,
+  c9s_tweet_anatomy_moderator_badge_enabled: true,
+  communities_web_enable_tweet_community_results_fetch: true,
+  creator_subscriptions_quote_tweet_preview_enabled: false,
+  creator_subscriptions_tweet_preview_api_enabled: true,
+  freedom_of_speech_not_reach_fetch_enabled: true,
+  graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+  longform_notetweets_consumption_enabled: true,
+  longform_notetweets_inline_media_enabled: true,
+  longform_notetweets_rich_text_read_enabled: true,
+  responsive_web_edit_tweet_api_enabled: true,
+  responsive_web_enhance_cards_enabled: false,
+  responsive_web_graphql_exclude_directive_enabled: true,
+  responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+  responsive_web_grok_community_note_auto_translation_is_enabled: false,
+  responsive_web_graphql_timeline_navigation_enabled: true,
+  responsive_web_grok_imagine_annotation_enabled: false,
+  responsive_web_media_download_video_enabled: false,
+  responsive_web_profile_redirect_enabled: true,
+  responsive_web_twitter_article_tweet_consumption_enabled: true,
+  rweb_tipjar_consumption_enabled: true,
+  rweb_video_timestamps_enabled: true,
+  standardized_nudges_misinfo: true,
+  tweet_awards_web_tipping_enabled: false,
+  tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+  tweet_with_visibility_results_prefer_gql_media_interstitial_enabled: false,
+  tweetypie_unmention_optimization_enabled: true,
+  verified_phone_label_enabled: false,
+  view_counts_everywhere_api_enabled: true,
+  responsive_web_grok_analyze_button_fetch_trends_enabled: false,
+  premium_content_api_read_enabled: false,
+  profile_label_improvements_pcf_label_in_post_enabled: false,
+  responsive_web_grok_share_attachment_enabled: false,
+  responsive_web_grok_analyze_post_followups_enabled: false,
+  responsive_web_grok_image_annotation_enabled: false,
+  responsive_web_grok_analysis_button_from_backend: false,
+  responsive_web_jetfuel_frame: false,
+  rweb_video_screen_enabled: true,
+  responsive_web_grok_show_grok_translated_post: true
 };
 
 // ---------------------------------------------------------------------------
@@ -807,29 +849,22 @@ function rawQueryOf(text) {
   return "#" + (match ? match[1] : text.replace(/[^A-Za-z0-9_]/g, "")) + " filter:native_video";
 }
 
-async function searchRaw(cursor, text) {
+async function searchRaw(cursor, rawQuery) {
   var id = searchId();
-  if (!id) {
-    var found = await discover();
-    if (found.Search) id = found.Search;
-  }
-  if (!id) {
-    throw kino.error("unavailable", "search sin id", {
-      userMessage: "X no dejó buscar ahora. Abre el Inicio una vez y vuelve a intentar."
-    });
-  }
   var variables = {
-    rawQuery: rawQueryOf(text),
+    rawQuery: rawQuery,
     count: 20,
     querySource: "typed_query",
-    product: "Media"
+    product: "Latest"
   };
   if (cursor) variables.cursor = cursor;
   var query =
     "?variables=" +
     encodeURIComponent(JSON.stringify(variables)) +
     "&features=" +
-    encodeURIComponent(JSON.stringify(FEATURES));
+    encodeURIComponent(JSON.stringify(SEARCH_FEATURES)) +
+    "&fieldToggles=" +
+    encodeURIComponent(JSON.stringify({ withArticleRichContentState: false }));
   var r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: 14000 });
   if (r.status === 400 || r.status === 404 || r.status === 422) {
     var next = await discover();
@@ -854,14 +889,14 @@ async function searchRaw(cursor, text) {
   return parsePage(json);
 }
 
-async function xSearch(text) {
+async function xSearch(rawQuery) {
   var items = [];
   var seen = {};
   var cursor = null;
   for (var round = 0; round < 3; round++) {
     var page;
     try {
-      page = await searchRaw(cursor, text);
+      page = await searchRaw(cursor, rawQuery);
     } catch (e) {
       if (round === 0) throw e;
       break;
@@ -972,7 +1007,7 @@ export async function search(query) {
   var text = query && typeof query.q === "string" ? query.q.trim() : "";
   if (!text) return [];
   if (text.charAt(0) === "@" || text.charAt(0) === "#") {
-    return xSearch(text);
+    return xSearch(rawQueryOf(text));
   }
   var words = text.toLowerCase().split(/\s+/);
   var wanted = [];
@@ -1009,6 +1044,19 @@ export async function search(query) {
     }
     if (found.length >= 30 || !page.next) break;
     cursor = page.next;
+  }
+  // Además de los guardados, se busca en X y se suman los videos que falten.
+  try {
+    var fromX = await xSearch(text + " filter:native_video");
+    for (var x = 0; x < fromX.length; x++) {
+      var extra = fromX[x];
+      if (!seen[extra.id]) {
+        seen[extra.id] = true;
+        found.push(extra);
+      }
+    }
+  } catch (e) {
+    kino.log("search x:", e && e.code);
   }
   return found.slice(0, 100);
 }

@@ -1,11 +1,11 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio.",
+  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca videos de X con @usuario y #etiqueta.",
   "color": "#1D9BF0",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",

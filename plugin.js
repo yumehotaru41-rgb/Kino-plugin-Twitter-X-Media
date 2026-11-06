@@ -27,10 +27,13 @@ const SEED_BOOKMARKS = "Glt3WAwBvNSPD-n_sqmX_A";
 // Semilla conocida de la consulta del Inicio (HomeTimeline); si X la rota, discover() trae la buena.
 const SEED_HOME = "c-CzHF1LboFilMpsx4ZCrQ";
 
+// La búsqueda de X (SearchTimeline) no tiene semilla fiable: discover() la encuentra en la web de X.
+const SEED_SEARCH = "";
+
 const OPS_KEY = "ops:v1";
 const MEDIA_KEY = "media:v1";
 const ACCOUNT_KEY = "account:v1";
-const MEDIA_MAX = 120;
+const MEDIA_MAX = 150;
 const MEDIA_MAX_CHARS = 110000;
 
 // Lo que la web de X manda con la consulta: banderas de funciones y de campos.
@@ -254,6 +257,12 @@ function homeId() {
   return SEED_HOME;
 }
 
+function searchId() {
+  var ops = savedOps();
+  if (ops && typeof ops.Search === "string" && ops.Search) return ops.Search;
+  return SEED_SEARCH;
+}
+
 function scanForOperation(body, name) {
   // El nombre de la operación va pegado a su queryId en la tabla de la web de X.
   var markers = ['operationName:"' + name + '"', 'operationName": "' + name + '"'];
@@ -272,7 +281,7 @@ function scanForOperation(body, name) {
 // X no publica su identificador de consulta: se lee de los archivos de su propia web. Es de mejor
 // esfuerzo — si falla, queda la semilla y el campo avanzado de los ajustes.
 async function discover() {
-  var found = { Bookmarks: "", HomeTimeline: "" };
+  var found = { Bookmarks: "", HomeTimeline: "", Search: "" };
   var started = Date.now();
   var html = "";
   try {
@@ -291,6 +300,8 @@ async function discover() {
     if (idB) found.Bookmarks = idB;
     var idH = scanForOperation(text, "HomeTimeline");
     if (idH) found.HomeTimeline = idH;
+    var idS = scanForOperation(text, "SearchTimeline");
+    if (idS) found.Search = idS;
   }
 
   // 1) Los .js que la propia página enlaza (main y los demás).
@@ -319,7 +330,7 @@ async function discover() {
     }
     bodies.push(body);
     scan(body);
-    if (found.Bookmarks && found.HomeTimeline) break;
+    if (found.Bookmarks && found.HomeTimeline && found.Search) break;
   }
 
   // 2) X sacó estas consultas de main: viven en paquetes que la página carga
@@ -329,7 +340,8 @@ async function discover() {
   var lazy = [
     "shared~bundle.BookmarkFolders~bundle.Bookmarks",
     "shared~bundle.Compose~bundle.HomeTimeline~bundle.LoggedInMain",
-    "bundle.HomeTimeline"
+    "bundle.HomeTimeline",
+    "bundle.SearchTimeline"
   ];
   if (!found.Bookmarks || !found.HomeTimeline) {
     for (var n = 0; n < lazy.length && Date.now() - started < 24000; n++) {
@@ -355,23 +367,24 @@ async function discover() {
           continue;
         }
       }
-      if (found.Bookmarks && found.HomeTimeline) break;
+      if (found.Bookmarks && found.HomeTimeline && found.Search) break;
     }
   }
 
-  if (found.Bookmarks || found.HomeTimeline) {
+  if (found.Bookmarks || found.HomeTimeline || found.Search) {
     try {
       var prev = savedOps() || {};
       if (found.Bookmarks) prev.Bookmarks = found.Bookmarks;
       if (found.HomeTimeline) prev.HomeTimeline = found.HomeTimeline;
-      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: prev.Bookmarks, HomeTimeline: prev.HomeTimeline, at: Date.now() }), {
+      if (found.Search) prev.Search = found.Search;
+      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: prev.Bookmarks, HomeTimeline: prev.HomeTimeline, Search: prev.Search, at: Date.now() }), {
         ttlMs: 7 * 24 * 60 * 60 * 1000
       });
     } catch (e) {
       /* sin caché igual sirve para esta llamada */
     }
   }
-  kino.log("discover:", found.Bookmarks || found.HomeTimeline ? "encontrado" : "sin resultado");
+  kino.log("discover:", found.Bookmarks || found.HomeTimeline || found.Search ? "encontrado" : "sin resultado");
   return found;
 }
 
@@ -683,10 +696,9 @@ function parsePage(json) {
         var record = videoRecord(media[mm]);
         if (!record) continue;
         var key = tweetId + ":" + index;
-        if (!cache[key]) {
-          cache[key] = record;
-          dirty = true;
-        }
+        delete cache[key];
+        cache[key] = record; // reinsertar: lo que se muestra queda como lo más reciente en la caché
+        dirty = true;
         var item = itemOf(tweet, media[mm], index, tweetId, handle);
         if (item && !seen[item.id]) {
           seen[item.id] = true;
@@ -783,6 +795,90 @@ async function timelinePage(cursor, options) {
   return parsePage(json);
 }
 
+// ---------------------------------------------------------------------------
+// Búsqueda en X: @usuario y #etiqueta traen videos directamente de X
+// ---------------------------------------------------------------------------
+
+function rawQueryOf(text) {
+  if (text.charAt(0) === "@") {
+    return "from:" + text.slice(1).replace(/[^A-Za-z0-9_]/g, "") + " filter:native_video";
+  }
+  var match = /^#([A-Za-z0-9_]+)/.exec(text);
+  return "#" + (match ? match[1] : text.replace(/[^A-Za-z0-9_]/g, "")) + " filter:native_video";
+}
+
+async function searchRaw(cursor, text) {
+  var id = searchId();
+  if (!id) {
+    var found = await discover();
+    if (found.Search) id = found.Search;
+  }
+  if (!id) {
+    throw kino.error("unavailable", "search sin id", {
+      userMessage: "X no dejó buscar ahora. Abre el Inicio una vez y vuelve a intentar."
+    });
+  }
+  var variables = {
+    rawQuery: rawQueryOf(text),
+    count: 20,
+    querySource: "typed_query",
+    product: "Media"
+  };
+  if (cursor) variables.cursor = cursor;
+  var query =
+    "?variables=" +
+    encodeURIComponent(JSON.stringify(variables)) +
+    "&features=" +
+    encodeURIComponent(JSON.stringify(FEATURES));
+  var r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: 14000 });
+  if (r.status === 400 || r.status === 404 || r.status === 422) {
+    var next = await discover();
+    if (next.Search && next.Search !== id) {
+      id = next.Search;
+      r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: 14000 });
+    }
+  }
+  if (!r.ok) {
+    throw kino.error("unavailable", "search " + r.status, {
+      userMessage: "X no respondió a la búsqueda (código " + r.status + "). Inténtalo más tarde."
+    });
+  }
+  var json;
+  try {
+    json = r.json();
+  } catch (e) {
+    throw kino.error("unavailable", "search json", {
+      userMessage: "La búsqueda de X devolvió algo que no se entiende. Inténtalo más tarde."
+    });
+  }
+  return parsePage(json);
+}
+
+async function xSearch(text) {
+  var items = [];
+  var seen = {};
+  var cursor = null;
+  for (var round = 0; round < 3; round++) {
+    var page;
+    try {
+      page = await searchRaw(cursor, text);
+    } catch (e) {
+      if (round === 0) throw e;
+      break;
+    }
+    for (var i = 0; i < page.items.length; i++) {
+      var item = page.items[i];
+      if (!seen[item.id]) {
+        seen[item.id] = true;
+        items.push(item);
+      }
+    }
+    if (items.length >= 60 || !page.next) break;
+    cursor = page.next;
+  }
+  return items.slice(0, 100);
+}
+
 export async function home() {
   requireSession();
   var rows = [];
@@ -875,6 +971,9 @@ export async function search(query) {
   requireSession();
   var text = query && typeof query.q === "string" ? query.q.trim() : "";
   if (!text) return [];
+  if (text.charAt(0) === "@" || text.charAt(0) === "#") {
+    return xSearch(text);
+  }
   var words = text.toLowerCase().split(/\s+/);
   var wanted = [];
   for (var i = 0; i < words.length; i++) {
@@ -925,7 +1024,7 @@ export async function resolve(ref) {
   if (!record) record = await lookupVideo(tweetId, index);
   if (!record || (!record.v && !record.h)) {
     throw kino.error("not_found", "sin url para " + ref, {
-      userMessage: "Ese video ya no está en tus guardados de X."
+      userMessage: "Ese video ya no está disponible en X. Actualiza el Inicio y vuelve a intentar."
     });
   }
 
@@ -988,13 +1087,24 @@ async function lookupVideo(tweetId, index) {
     kino.log("syndication:", e && e.code);
   }
 
-  var cursor = null;
-  for (var round = 0; round < 4; round++) {
-    var page = await bookmarksPage(cursor, { count: 40, timeoutMs: 10000 });
-    var cached = readMediaCache()[tweetId + ":" + index];
-    if (cached) return cached;
-    if (!page.next) break;
-    cursor = page.next;
+  var pools = [
+    { pages: 3, run: function (c) { return bookmarksPage(c, { count: 40, timeoutMs: 10000 }); } },
+    { pages: 3, run: function (c) { return timelinePage(c, { count: 20, timeoutMs: 10000 }); } }
+  ];
+  for (var p = 0; p < pools.length; p++) {
+    var cursor = null;
+    for (var round = 0; round < pools[p].pages; round++) {
+      var page;
+      try {
+        page = await pools[p].run(cursor);
+      } catch (e) {
+        break;
+      }
+      var cached = readMediaCache()[tweetId + ":" + index];
+      if (cached) return cached;
+      if (!page.next) break;
+      cursor = page.next;
+    }
   }
   return null;
 }

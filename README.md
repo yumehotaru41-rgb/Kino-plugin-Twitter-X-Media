@@ -51,8 +51,8 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
   ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
   reproductor.
-- **Búsqueda**: busca por palabras en el texto de tus tuits guardados (recorre hasta tres páginas de
-  guardados por búsqueda).
+- **Búsqueda**: por palabras en tus tuits guardados; y con `@usuario` o `#etiqueta` trae videos
+  directamente de la búsqueda de X (hasta tres páginas por búsqueda).
 - El póster y el fondo salen del fotograma que X publica para cada video; el título, de la primera
   línea del tuit; la sinopsis, del texto completo.
 

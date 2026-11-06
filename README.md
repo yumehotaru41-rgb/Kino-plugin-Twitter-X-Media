@@ -1,8 +1,9 @@
 # Twitter/X Media — un plugin de Kino para tus videos guardados de X (Twitter)
 
 Este plugin convierte los **videos que guardaste en X** («Elementos guardados» / Bookmarks) en
-títulos de Kino: aparecen en una fila del Inicio, se abren en el reproductor de Kino, guardan el
-progreso y entran en «Continuar viendo» y en la biblioteca como cualquier otro título.
+títulos de Kino: aparecen en varias filas del Inicio y se abren en el reproductor de Kino. El plugin
+está en la categoría «solo adultos» y sus videos se listan como canales en vivo: Kino no los guarda
+en «Mi biblioteca» ni en «Continuar viendo», así que no queda historial de lo que ves.
 
 Incluye su **menú de inicio de sesión**: una ventana de X que se abre dentro de Kino para que entres
 con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no puede abrir esa ventana.
@@ -44,8 +45,8 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 
 ## Qué ves en Kino
 
-- **Inicio ▸ Tus videos guardados**: una fila con los videos de tus Elementos guardados (los tuits
-  que no traen video se omiten). Su tarjeta **Ver más** abre la lista completa, paginada.
+- **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados y más guardados
+  (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
   ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
   reproductor.
@@ -104,4 +105,3 @@ node sdk/run.mjs . home
 `auth_required`, que es lo esperado. El banco de pruebas de este repositorio (`.dev/test.mjs`, fuera
 del plugin publicado) corre `home`, `browse`, `search`, `resolve`, `action`, `settingsStatus` y
 `validateSettings` contra un `kino` falso, sin red.
-

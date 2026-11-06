@@ -2,8 +2,9 @@
 
 Este plugin convierte los **videos que guardaste en X** («Elementos guardados» / Bookmarks) en
 títulos de Kino: aparecen en varias filas del Inicio y se abren en el reproductor de Kino. El plugin
-está en la categoría «solo adultos» y sus videos se listan como canales en vivo: Kino no los guarda
-en «Mi biblioteca» ni en «Continuar viendo», así que no queda historial de lo que ves.
+está en la categoría «solo adultos» y cada video se marca 18+ (`adult: true`, la misma estructura
+de ítems que el plugin de xHamster): Kino no lo guarda en «Mi biblioteca» ni en «Continuar viendo»,
+así que no queda historial de lo que ves.
 
 Incluye su **menú de inicio de sesión**: una ventana de X que se abre dentro de Kino para que entres
 con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no puede abrir esa ventana.

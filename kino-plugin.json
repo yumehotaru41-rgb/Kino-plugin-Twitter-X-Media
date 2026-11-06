@@ -1,12 +1,22 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
   "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio.",
   "color": "#1D9BF0",
+  "author": "Hotaru Yume",
+  "creator": "hotaruyume",
+  "homepage": "https://github.com/yumehotaru41-rgb/Kino-plugin-Twitter-X-Media",
+  "theme": {
+    "accent": "#1D9BF0",
+    "onAccent": "#FFFFFF",
+    "background": "#0A0F16",
+    "surface": "#16202B",
+    "highlight": "#F2F6FA"
+  },
   "hosts": [
     "x.com",
     "twitter.com",

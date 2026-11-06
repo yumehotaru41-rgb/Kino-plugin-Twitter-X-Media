@@ -1,4 +1,6 @@
 // Twitter/X Media — los videos de tus «Elementos guardados» de X (Twitter) dentro de Kino.
+// Estructura de ítems igual al plugin de xHamster: kind "movie" con adult: true, así Kino no
+// guarda nada en «Mi biblioteca» ni en «Continuar viendo» (privacidad: sin historial).
 //
 // apiVersion 14 (Kino 0.9.74). La sesión se inicia dentro de Kino con una ventana de navegador
 // visible (enhancements["20"].visualBrowser, Kino 0.9.81) o pegando las cookies a mano.
@@ -616,7 +618,8 @@ function itemOf(tweet, media, index, tweetId, handle) {
     id: index === 0 ? tweetId : tweetId + "-" + index,
     ref: "t:" + tweetId + ":" + index,
     title: title,
-    kind: "live", // canal: Kino nunca lo guarda en la biblioteca ni en «Continuar viendo»
+    kind: "movie",
+    adult: true // 18+ como el plugin de xHamster: Kino no lo guarda en «Mi biblioteca» ni en «Continuar viendo»
     badges: ["X"]
   };
   if (poster) {

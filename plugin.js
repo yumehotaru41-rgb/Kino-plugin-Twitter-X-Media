@@ -293,6 +293,9 @@ function savedOps() {
 
 function queryId() {
   var override = setting("queryId");
+  // Formas: «XXXX» (solo guardados, como siempre) o «bookmarks:XXXX».
+  var manual = /^bookmarks[:=]\s*([A-Za-z0-9_-]{10,60})$/i.exec(String(override || ""));
+  if (manual) return { Bookmarks: manual[1] };
   if (/^[A-Za-z0-9_-]{10,60}$/.test(override)) return { Bookmarks: override };
   return savedOps() || { Bookmarks: SEED_BOOKMARKS };
 }
@@ -304,6 +307,10 @@ function homeId() {
 }
 
 function searchId() {
+  // El campo avanzado también puede fijar solo el de búsqueda: «search:XXXX».
+  var override = String(setting("queryId") || "");
+  var manual = /^search[:=]\s*([A-Za-z0-9_-]{10,60})$/i.exec(override);
+  if (manual) return manual[1];
   var ops = savedOps();
   if (ops && typeof ops.Search === "string" && ops.Search) return ops.Search;
   return SEED_SEARCH;
@@ -326,7 +333,12 @@ function scanForOperation(body, name) {
 
 // X no publica su identificador de consulta: se lee de los archivos de su propia web. Es de mejor
 // esfuerzo — si falla, queda la semilla y el campo avanzado de los ajustes.
+var lastDiscover = { at: 0, found: null };
+
 async function discover() {
+  // Enfriamiento: una búsqueda con el identificador viejo puede fallar en
+  // varias peticiones seguidas; releer la web de X en cada una no ayuda.
+  if (lastDiscover.found && Date.now() - lastDiscover.at < 90000) return lastDiscover.found;
   var found = { Bookmarks: "", HomeTimeline: "", Search: "" };
   var started = Date.now();
   var html = "";
@@ -382,14 +394,16 @@ async function discover() {
   // 2) X sacó estas consultas de main: viven en paquetes que la página carga
   //    aparte. El runtime de webpack del propio main trae el nombre de cada
   //    paquete con su número y, en otra tabla, su hash; con los dos se arma
-  //    la dirección del paquete.
+  //    la dirección del paquete. OJO: también hay que entrar cuando solo
+  //    falta Search — la página de guardados no carga el paquete de búsqueda,
+  //    así que su identificador casi siempre vive aquí.
   var lazy = [
     "shared~bundle.BookmarkFolders~bundle.Bookmarks",
     "shared~bundle.Compose~bundle.HomeTimeline~bundle.LoggedInMain",
     "bundle.HomeTimeline",
     "bundle.SearchTimeline"
   ];
-  if (!found.Bookmarks || !found.HomeTimeline) {
+  if (!found.Bookmarks || !found.HomeTimeline || !found.Search) {
     for (var n = 0; n < lazy.length && Date.now() - started < 24000; n++) {
       var escaped = lazy[n].replace(/[.~]/g, "\\$&");
       for (var b = 0; b < bodies.length; b++) {
@@ -431,6 +445,7 @@ async function discover() {
     }
   }
   kino.log("discover:", found.Bookmarks || found.HomeTimeline || found.Search ? "encontrado" : "sin resultado");
+  lastDiscover = { at: Date.now(), found: found };
   return found;
 }
 
@@ -996,6 +1011,18 @@ async function searchFetch(cursor, rawQuery, product, timeoutMs) {
     }
   }
   if (!r.ok) {
+    // 400/404/422: la señal clásica de que X rotó el identificador de su API.
+    if (r.status === 400 || r.status === 404 || r.status === 422) {
+      throw kino.error("unavailable", "search " + r.status + " id viejo", {
+        userMessage:
+          "X cambió el identificador de su API de búsqueda (código " + r.status + "). " +
+          "El plugin intenta recuperarlo solo: vuelve a intentar en unos minutos. Si no se arregla, " +
+          "abre x.com en tu computador, busca cualquier cosa, en F12 ▸ Red busca la petición «SearchTimeline» " +
+          "y copia el código de su dirección (va entre «graphql/» y «/SearchTimeline»); pégalo en " +
+          "Ajustes ▸ Twitter/X Media ▸ Identificador de la API escribiendo search: delante " +
+          "(por ejemplo: search:vLHjqbDv7TPFMBkIIO1nOA)"
+      });
+    }
     throw kino.error("unavailable", "search " + r.status, {
       userMessage: "X no respondió a la búsqueda (código " + r.status + "). Inténtalo más tarde."
     });

@@ -1,7 +1,7 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -135,8 +135,8 @@
       "label": "Identificador de la API (avanzado)",
       "labelEn": "API identifier (advanced)",
       "type": "text",
-      "hint": "Déjalo vacío: solo si X cambia su API",
-      "hintEn": "Leave it empty: only if X changes its API"
+      "hint": "Déjalo vacío. Si la búsqueda falla con código 404: en x.com ▸ F12 ▸ Red, petición «SearchTimeline», copia el código entre «graphql/» y «/SearchTimeline» y pégalo así: search:vLHjqbDv7TPFMBkIIO1nOA",
+      "hintEn": "Leave it empty. If search fails with a 404: on x.com ▸ F12 ▸ Network, «SearchTimeline» request, copy the code between «graphql/» and «/SearchTimeline» and paste it like: search:vLHjqbDv7TPFMBkIIO1nOA"
     },
     {
       "key": "limpiar",

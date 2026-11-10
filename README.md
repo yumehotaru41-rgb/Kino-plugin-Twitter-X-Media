@@ -80,7 +80,9 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - X **cambia el identificador de esas consultas** cada tanto. Si eso pasa, el plugin intenta
   descubrir el nuevo leyendo los archivos JavaScript de la propia web de X (`abs.twimg.com`) y lo
   guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
-  permite pegarlo a mano.
+  permite pegarlo a mano: para la búsqueda, escribe `search:` seguido del código de la petición
+  «SearchTimeline» (visible en x.com ▸ F12 ▸ Red); para los guardados, `bookmarks:` seguido del
+  código de «Bookmarks». El propio mensaje de error de la búsqueda explica cómo encontrarlo.
 - La URL de cada video se guarda en la caché del plugin (hasta 120 videos) para que reproducir no
   cueste otra petición. «Limpiar la caché de videos» la vacía.
 - Solo videos: los tuits con fotos o solo texto no aparecen. No se pueden descargar (el plugin no

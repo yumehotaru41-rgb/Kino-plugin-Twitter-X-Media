@@ -51,8 +51,11 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
   (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
 - **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
   plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y verás todos
-  los videos públicos relacionados en una fila de tarjetas; el **Ver más** de esa fila pagina todos
-  los resultados. Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale
+  los videos públicos relacionados como un **feed con scroll al estilo de X**: una tarjeta por
+  publicación con su imagen, @autor, fecha, ❤ y vistas. Cada tarjeta abre su video en Kino; su botón
+  **Abrir en X** enseña la hoja «Abrir un enlace» de Kino y lleva a la publicación en x.com (en el TV,
+  un QR para escanearlo con el teléfono), y **Ver más resultados** abre la lista completa, paginada.
+  Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale
   con el código desbloqueado, y sus resultados tampoco quedan en tu historial.
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
   ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
@@ -119,3 +122,4 @@ node sdk/run.mjs . home
 `auth_required`, que es lo esperado. El banco de pruebas de este repositorio (`.dev/test.mjs`, fuera
 del plugin publicado) corre `home`, `browse`, `search`, `resolve`, `action`, `settingsStatus` y
 `validateSettings` contra un `kino` falso, sin red.
+

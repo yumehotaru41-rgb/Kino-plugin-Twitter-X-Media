@@ -691,6 +691,18 @@ function itemOf(tweet, media, index, tweetId, handle) {
   var lang = tweet && tweet.legacy && tweet.legacy.lang;
   if (typeof lang === "string" && lang) item.lang = lang.slice(0, 20);
   if (quality) item.quality = quality;
+
+  // Extras para la pantalla propia (el feed con imágenes): autor, fecha,
+  // ❤ y vistas. Solo los lee la pantalla al armar sus tarjetas; Kino
+  // ignora los campos que no conoce.
+  if (handle) item.handle = handle;
+  var createdAt = tweet && tweet.legacy && typeof tweet.legacy.created_at === "string" ? tweet.legacy.created_at : "";
+  var when = createdAt ? Date.parse(createdAt) : NaN;
+  if (!isNaN(when)) item.posted = when;
+  var fav = tweet && tweet.legacy && typeof tweet.legacy.favorite_count === "number" ? tweet.legacy.favorite_count : 0;
+  if (fav) item.fav = fav;
+  var seen = tweet && tweet.views && typeof tweet.views.count === "number" ? tweet.views.count : 0;
+  if (seen) item.views = seen;
   return item;
 }
 
@@ -1514,25 +1526,130 @@ export async function validateSettings(values) {
 var TOPIC_CHIPS = ["#anime", "cosplay", "#gaming", "música", "deportes", "#cine", "tráiler", "noticias"];
 
 // Cuántos resultados guarda la pantalla en su estado (el parche de estado
-// admite hasta 64 KB; sin sinopsis, 30 títulos van sobrados).
+// admite hasta 64 KB; título, texto recortado e imagen caben de sobra).
 var MAX_SCREEN_ITEMS = 30;
 
-// Copia ligera de un título para el estado de la pantalla: sin la sinopsis,
-// que es lo que más pesa. La ficha del título sale del ref, como siempre.
-function lightItem(item) {
-  var copy = {
+// «1,2 mil» / «3,4 M», al estilo de X.
+function prettyCount(n) {
+  if (!n || n < 1) return "";
+  if (n >= 1000000) return String(Math.round(n / 100000) / 10).replace(".", ",") + " M";
+  if (n >= 1000) return String(Math.round(n / 100) / 10).replace(".", ",") + " mil";
+  return String(n);
+}
+
+// La línea de ❤ y vistas que sale bajo la imagen.
+function statsLine(item) {
+  var parts = [];
+  if (item.fav) parts.push("♥ " + prettyCount(item.fav));
+  if (item.views) parts.push(prettyCount(item.views) + " vistas");
+  return parts.join(" · ");
+}
+
+// Una publicación para el estado de la pantalla: lo justo para dibujar su
+// tarjeta (autor, fecha, texto, imagen y enlace a x.com) sin pasarse del
+// parche de 64 KB.
+function feedPost(item) {
+  var match = /^t:(\d{1,25}):\d{1,2}$/.exec(String(item.ref || ""));
+  var tweetId = match ? match[1] : "";
+  var handle = typeof item.handle === "string" ? item.handle : "";
+  var text = typeof item.overview === "string" ? item.overview : "";
+  var post = {
     id: item.id,
     ref: item.ref,
     title: item.title,
-    kind: "movie",
-    adult: true,
-    badges: ["X"]
+    image: item.backdrop || item.poster || "",
+    quality: item.quality || "",
+    stats: statsLine(item)
   };
-  if (item.poster) copy.poster = item.poster;
-  if (item.backdrop) copy.backdrop = item.backdrop;
-  if (item.year) copy.year = item.year;
-  if (item.quality) copy.quality = item.quality;
-  return copy;
+  if (handle) {
+    post.by = "@" + handle;
+    if (tweetId) post.web = X + "/" + handle + "/status/" + tweetId;
+  } else if (tweetId) {
+    post.web = X + "/i/status/" + tweetId;
+  }
+  if (text.length > 280) text = text.slice(0, 277) + "…";
+  if (text) post.text = text;
+  if (item.posted) post.at = item.posted;
+  return post;
+}
+
+// Una tarjeta del feed, al estilo de X: quién y cuándo arriba, el texto,
+// la imagen de la publicación y abajo los botones — «Ver» abre la ficha
+// del video en Kino; «Abrir en X» enseña la hoja de Kino y lleva a la
+// publicación en x.com (en el TV, su QR para escanearlo con el teléfono).
+function feedCard(p) {
+  var children = [];
+
+  if (p.by || p.at) {
+    var head = { type: "Row", gap: 6, crossAxisAlignment: "center", children: [] };
+    if (p.by) {
+      head.children.push({ type: "Icon", name: "person" });
+      head.children.push({ type: "Text", text: p.by, bold: true, maxLines: 1 });
+    }
+    if (p.at) {
+      if (p.by) head.children.push({ type: "Text", text: "·", style: "caption" });
+      head.children.push({ type: "Text", time: p.at, timeFormat: "relative", style: "caption" });
+    }
+    children.push(head);
+  }
+
+  children.push({ type: "Text", text: p.title, bold: true, style: "p", maxLines: 2 });
+
+  // El título es la primera línea del texto; el resto sale como cuerpo.
+  var rest = "";
+  if (p.text && p.text.length > p.title.length && p.text.indexOf(p.title) === 0) {
+    rest = p.text.slice(p.title.length).replace(/^\s+/, "");
+  } else if (p.text && p.text !== p.title) {
+    rest = p.text;
+  }
+  if (rest) children.push({ type: "Text", text: rest, style: "p", maxLines: 3 });
+
+  if (p.image) {
+    children.push({
+      type: "Image",
+      url: p.image,
+      aspect: "16:9",
+      fit: "cover",
+      fill: true,
+      alt: p.title,
+      altEn: p.title
+    });
+  }
+
+  var meta = [];
+  if (p.quality) meta.push({ type: "Badge", text: p.quality });
+  if (p.stats) meta.push({ type: "Text", text: p.stats, style: "caption" });
+  var actions = [
+    {
+      type: "TextButton",
+      icon: "play",
+      labelText: "Ver",
+      labelTextEn: "Watch",
+      onPressed: { event: "ver", arg: p.id }
+    }
+  ];
+  if (p.web) {
+    actions.push({
+      type: "TextButton",
+      icon: "open_in_new",
+      labelText: "Abrir en X",
+      labelTextEn: "Open on X",
+      onPressed: { event: "xweb", arg: p.id }
+    });
+  }
+  var bottom = { type: "Row", gap: 10, mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [] };
+  if (meta.length) bottom.children.push({ type: "Row", gap: 8, crossAxisAlignment: "center", children: meta });
+  bottom.children.push({ type: "Row", gap: 4, crossAxisAlignment: "center", children: actions });
+  children.push(bottom);
+
+  return {
+    type: "Card",
+    variant: "outlined",
+    padding: 12,
+    gap: 8,
+    onTap: { event: "ver", arg: p.id },
+    children: children
+  };
 }
 
 export async function screen(arg) {
@@ -1616,7 +1733,7 @@ export async function screen(arg) {
       labelTextEn: "Retry",
       onPressed: { event: "buscar", timeoutMs: 30000 }
     });
-  } else if (results && !results.items.length) {
+  } else if (results && (!results.posts || !results.posts.length)) {
     children.push({
       type: "emptyState",
       icon: "search",
@@ -1626,20 +1743,34 @@ export async function screen(arg) {
       textEn: "No public X video matches. Try other words or fewer terms."
     });
   } else if (results) {
+    // El feed: una tarjeta por publicación, con su imagen, al estilo de la
+    // cronología de X, desplazándose solo. Abajo, «Ver más» abre la lista
+    // completa con páginas (la que trae browse con los ref «x:»).
+    var posts = results.posts;
+    var count = typeof results.total === "number" ? results.total : posts.length;
     children.push({
       type: "Text",
       style: "caption",
-      text: results.items.length + " videos de X · «" + results.q + "»",
-      textEn: results.items.length + ' X videos · "' + results.q + '"'
+      text: count + " videos de X · «" + results.q + "»",
+      textEn: count + ' X videos · "' + results.q + '"'
     });
-    children.push({
-      type: "titleRail",
-      title: "Resultados de X",
-      titleEn: "X results",
-      items: results.items,
-      ref: "x:" + encodeURIComponent(results.raw),
-      size: "medium"
+    var cards = [];
+    for (var i = 0; i < posts.length; i++) cards.push(feedCard(posts[i]));
+    cards.push({
+      type: "Row",
+      padding: 12,
+      mainAxisAlignment: "center",
+      children: [
+        {
+          type: "TextButton",
+          icon: "expand_more",
+          labelText: "Ver más resultados",
+          labelTextEn: "More results",
+          onPressed: { event: "vermas" }
+        }
+      ]
     });
+    children.push({ type: "ListView", flex: 1, gap: 10, items: cards });
   } else {
     children.push({
       type: "emptyState",
@@ -1651,14 +1782,68 @@ export async function screen(arg) {
     });
   }
 
-  return { type: "Column", padding: 16, gap: 12, children: children };
+  // «fill»: el buscador queda arriba fijo y la ListView, con flex, se
+  // desplaza sola como la cronología de X.
+  return { type: "Column", padding: 16, gap: 12, children: children, layout: "fill" };
 }
 
 export async function screenEvent(event) {
   var name = event && typeof event.name === "string" ? event.name : "";
+  var arg = event && typeof event.arg === "string" ? event.arg : "";
+  var state = (event && event.state) || {};
+
+  // Botones de las tarjetas del feed: «Ver» abre la ficha del video en Kino
+  // (y se reproduce desde ahí, como siempre), «Abrir en X» enseña la hoja
+  // «Abrir un enlace» de Kino y lleva a la publicación en x.com (en el TV,
+  // un QR para escanearlo con el teléfono), y «Ver más resultados» abre la
+  // lista completa paginada.
+  if (name === "ver" || name === "xweb" || name === "vermas") {
+    var results = state.results;
+    if (!results) return null;
+    if (name === "vermas") {
+      if (typeof results.raw !== "string" || !results.raw) return null;
+      return {
+        go: {
+          browse: {
+            ref: "x:" + encodeURIComponent(results.raw),
+            title: "Resultados de X",
+            titleEn: "X results"
+          }
+        }
+      };
+    }
+    var posts = results.posts || [];
+    var post = null;
+    for (var i = 0; i < posts.length; i++) {
+      if (posts[i].id === arg) {
+        post = posts[i];
+        break;
+      }
+    }
+    if (!post) {
+      return {
+        toast: {
+          text: "Ese video ya no está en la lista; busca otra vez",
+          textEn: "That video is gone from the list; search again"
+        }
+      };
+    }
+    if (name === "xweb") {
+      if (!post.web) {
+        return {
+          toast: {
+            text: "Esta publicación no tiene enlace a la web",
+            textEn: "This post has no web link"
+          }
+        };
+      }
+      return { go: { url: { href: post.web, title: post.title.slice(0, 60) } } };
+    }
+    return { go: { title: { ref: post.ref, kind: "movie", id: post.id, title: post.title, adult: true } } };
+  }
+
   if (name !== "buscar" && name !== "tema") return null;
 
-  var state = (event && event.state) || {};
   var inputs = state.inputs || {};
   var q = "";
   var value = event.value;
@@ -1678,7 +1863,12 @@ export async function screenEvent(event) {
   var results;
   try {
     var items = await searchEverywhere(q, 25000);
-    results = { q: q, raw: rawQueryOf(q), items: items.slice(0, MAX_SCREEN_ITEMS).map(lightItem) };
+    results = {
+      q: q,
+      raw: rawQueryOf(q),
+      total: items.length,
+      posts: items.slice(0, MAX_SCREEN_ITEMS).map(feedPost)
+    };
   } catch (e) {
     var msg = e && e.userMessage ? e.userMessage : "X no respondió ahora. Inténtalo más tarde.";
     results = { q: q, raw: rawQueryOf(q), error: msg };

@@ -1,11 +1,11 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca todos los videos de X: @usuario (su perfil completo), #etiqueta (recientes y populares) o cualquier tópico o persona («Hinata Hyuga») con resultados de toda X, y con su propia pantalla «Buscar en X».",
+  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca todos los videos de X: @usuario, #etiqueta o cualquier tópico o persona («Hinata Hyuga»). Su pantalla «Buscar en X» muestra los resultados como un feed estilo X — imagen de cada publicación, autor, fecha, ❤ y vistas — con un botón para abrir cada una en x.com.",
   "color": "#1D9BF0",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
@@ -146,3 +146,4 @@
     }
   ]
 }
+

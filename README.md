@@ -15,6 +15,7 @@ con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no pue
 | --- | --- |
 | Kino | 0.9.74 o más nuevo (el plugin declara `apiVersion` 14). |
 | La ventana de inicio de sesión | 0.9.81 o más nuevo, en un teléfono, tableta o Android TV. En un Kino anterior, o en un aparato sin WebView (la app de escritorio), se entra pegando las cookies. |
+| La pantalla «Buscar en X» | Kino con las pantallas de plugins activadas (Ajustes ▸ Apariencia / Plugins). Sale con el candado 18+ desbloqueado. |
 | Una cuenta de X | La tuya. El plugin lee **tus** Elementos guardados; no lee los de nadie más. |
 
 ## Instalación
@@ -48,22 +49,29 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 
 - **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados y más guardados
   (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
+- **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
+  plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y verás todos
+  los videos públicos relacionados en una fila de tarjetas; el **Ver más** de esa fila pagina todos
+  los resultados. Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale
+  con el código desbloqueado, y sus resultados tampoco quedan en tu historial.
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
   ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
   reproductor.
-- **Búsqueda**: en tus guardados y en toda X. `@usuario` trae **todos los videos del perfil**
-  (pestaña Multimedia), `#etiqueta` combina los recientes y los más populares (hasta cinco páginas),
-  cualquier palabra suma los videos públicos de X, y los operadores de X (`from:`, `since:`,
-  `min_faves:`, `lang:`…) se pasan tal cual. En la búsqueda de Kino, «Buscar en» permite elegir
-  este plugin y ver los videos mientras escribes (búsqueda con ámbito).
+- **Búsqueda de Kino**: en tus guardados y en toda X. `@usuario` trae **todos los videos del perfil**
+  (pestaña Multimedia), `#etiqueta` combina los recientes y los más populares, cualquier tópico o
+  persona («Hinata Hyuga») trae **todos los videos relacionados de X primero** (recientes y
+  populares, varias páginas) y después los guardados que coincidan, y los operadores de X (`from:`,
+  `since:`, `min_faves:`, `lang:`…) se pasan tal cual. En «Buscar en» dentro de una fila de guardados
+  o del Inicio, la búsqueda filtra esa lista; en otras listas filtra Kino.
 - El póster y el fondo salen del fotograma que X publica para cada video; el título, de la primera
   línea del tuit; la sinopsis, del texto completo.
 
 ## Cómo funciona (y sus límites, dichos sin adornos)
 
 - Con tu sesión, el plugin hace la **misma consulta interna que la web de X** para leer Elementos
-  guardados. X no publica esa consulta: no es una API estable ni documentada.
-- X **cambia el identificador de esa consulta** cada tanto. Si eso pasa, el plugin intenta
+  guardados, el Inicio y la búsqueda. X no publica esas consultas: no son una API estable ni
+  documentada.
+- X **cambia el identificador de esas consultas** cada tanto. Si eso pasa, el plugin intenta
   descubrir el nuevo leyendo los archivos JavaScript de la propia web de X (`abs.twimg.com`) y lo
   guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
   permite pegarlo a mano.
@@ -82,13 +90,15 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 El plugin no tiene servidor propio ni telemetría: no declara `telemetry`, y todo lo que sale del
 aparato va a hosts de X. Las cookies viajan solo a esos hosts, viven en un ajuste `password` de Kino
 (cifrado en el Keystore del aparato y sellado de punta a punta al sincronizarse) y `kino.storage`
-solo guarda el @usuario, el identificador de la consulta y las URLs de tus videos.
+solo guarda el @usuario, el identificador de la consulta y las URLs de tus videos. El estado de la
+pantalla «Buscar en X» vive en Kino y se borra con la conversación del plugin; nada de lo que buscas
+o ves se guarda en «Mi biblioteca» ni en «Continuar viendo».
 
 ## Estructura
 
 ```
-kino-plugin.json   manifiesto: hosts, capacidades, ajustes y la ventana de inicio de sesión
-plugin.js          el código: home, browse, search, resolve, settingsStatus, action, validateSettings
+kino-plugin.json   manifiesto: hosts, capacidades, pantalla propia, ajustes y la ventana de inicio de sesión
+plugin.js          el código: home, browse, search, resolve, screen, screenEvent, settingsStatus, action, validateSettings
 icon.png           ícono cuadrado del plugin
 README.md          esto
 ```

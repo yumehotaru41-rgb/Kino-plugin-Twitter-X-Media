@@ -13,6 +13,10 @@
 // Nota honesta: la consulta interna de X no es una API pública, y X cambia su identificador de vez
 // en cuando. Si eso pasa, el plugin intenta descubrir el nuevo leyendo los archivos de la propia
 // web de X, y el campo «Identificador de la API» de los ajustes permite fijarlo a mano.
+//
+// Además de las filas del Inicio, el plugin trae su propia pantalla «Buscar en X» (capability
+// "screen"): un buscador de tópicos, personas, @usuarios y #etiquetas que consulta a X primero
+// (recientes y populares) y suma después los guardados que coincidan.
 
 const X = "https://x.com";
 const SYNDICATION = "https://cdn.syndication.twimg.com";
@@ -859,7 +863,7 @@ function rawQueryOf(text) {
   return text + " filter:native_video";
 }
 
-async function searchRaw(cursor, rawQuery, product) {
+async function searchRaw(cursor, rawQuery, product, timeoutMs) {
   var id = searchId();
   var variables = {
     rawQuery: rawQuery,
@@ -875,12 +879,12 @@ async function searchRaw(cursor, rawQuery, product) {
     encodeURIComponent(JSON.stringify(SEARCH_FEATURES)) +
     "&fieldToggles=" +
     encodeURIComponent(JSON.stringify({ withArticleRichContentState: false }));
-  var r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: 14000 });
+  var r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: timeoutMs || 14000 });
   if (r.status === 400 || r.status === 404 || r.status === 422) {
     var next = await discover();
     if (next.Search && next.Search !== id) {
       id = next.Search;
-      r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: 14000 });
+      r = await xget(X + "/i/api/graphql/" + id + "/SearchTimeline" + query, { timeoutMs: timeoutMs || 14000 });
     }
   }
   if (!r.ok) {
@@ -899,15 +903,20 @@ async function searchRaw(cursor, rawQuery, product) {
   return parsePage(json);
 }
 
-async function xSearch(rawQuery, product, rounds) {
+async function xSearch(rawQuery, product, rounds, options) {
+  var opts = options || {};
+  var deadline = opts.budgetMs ? Date.now() + opts.budgetMs : 0;
   var items = [];
   var seen = {};
   var cursor = null;
   var maxRounds = rounds || 5;
   for (var round = 0; round < maxRounds; round++) {
+    if (deadline && Date.now() > deadline - 2500) break;
+    var timeout = opts.timeoutMs || 14000;
+    if (deadline) timeout = Math.min(timeout, Math.max(2500, deadline - Date.now()));
     var page;
     try {
-      page = await searchRaw(cursor, rawQuery, product);
+      page = await searchRaw(cursor, rawQuery, product, timeout);
     } catch (e) {
       if (round === 0) throw e;
       break;
@@ -923,6 +932,114 @@ async function xSearch(rawQuery, product, rounds) {
     cursor = page.next;
   }
   return items.slice(0, 100);
+}
+
+// ---------------------------------------------------------------------------
+// Palabras y filtros: lo común de la búsqueda de guardados y de la pantalla
+// ---------------------------------------------------------------------------
+
+function wordsOf(text) {
+  var lowered = text.toLowerCase();
+  var parts = lowered.split(/[\s,;]+/);
+  var wanted = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].length > 1 && wanted.indexOf(parts[i]) < 0) wanted.push(parts[i]);
+  }
+  if (!wanted.length && lowered.trim()) wanted.push(lowered.trim());
+  return wanted;
+}
+
+function matchesWords(item, wanted) {
+  var hay = (item.title + " " + (item.overview || "")).toLowerCase();
+  for (var i = 0; i < wanted.length; i++) {
+    if (hay.indexOf(wanted[i]) < 0) return false;
+  }
+  return true;
+}
+
+// Filtra una lista local (guardados o Inicio) por palabras, con presupuesto de tiempo.
+async function filterList(text, run, count, budgetMs) {
+  var wanted = wordsOf(text);
+  var found = [];
+  var seen = {};
+  var cursor = null;
+  var started = Date.now();
+  for (var round = 0; round < 3; round++) {
+    var remaining = budgetMs - (Date.now() - started);
+    if (remaining < 2500) break;
+    var page;
+    try {
+      page = await run(cursor, {
+        count: count,
+        timeoutMs: Math.min(9000, remaining)
+      });
+    } catch (e) {
+      if (round === 0) throw e;
+      break;
+    }
+    for (var i = 0; i < page.items.length; i++) {
+      var item = page.items[i];
+      if (matchesWords(item, wanted) && !seen[item.id]) {
+        seen[item.id] = true;
+        found.push(item);
+      }
+    }
+    if (found.length >= 60 || !page.next) break;
+    cursor = page.next;
+  }
+  return found;
+}
+
+// Une dos listas de títulos quitando repetidos.
+function mergeItems(first, second, cap) {
+  var out = first.slice();
+  var ids = {};
+  for (var i = 0; i < first.length; i++) ids[first[i].id] = true;
+  for (var j = 0; j < second.length; j++) {
+    if (!ids[second[j].id]) {
+      ids[second[j].id] = true;
+      out.push(second[j]);
+    }
+    if (out.length >= cap) break;
+  }
+  return out.slice(0, cap);
+}
+
+// La misma búsqueda que hace search() para palabras y #etiquetas, con un
+// presupuesto repartido: primero X (recientes y populares), después los
+// guardados que coincidan. La usan search() y la pantalla propia.
+async function searchEverywhere(text, budgetMs) {
+  var raw = rawQueryOf(text);
+  var fromX = [];
+  var xError = null;
+  var maxRounds = 3;
+  if (budgetMs < 12000) maxRounds = 2;
+  try {
+    var latest = await xSearch(raw, "Latest", maxRounds, {
+      timeoutMs: 11000,
+      budgetMs: Math.round(budgetMs * 0.45)
+    });
+    var popular = await xSearch(raw, "Top", 2, {
+      timeoutMs: 11000,
+      budgetMs: Math.round(budgetMs * 0.35)
+    });
+    fromX = mergeItems(latest, popular, 100);
+  } catch (e) {
+    xError = e;
+    kino.log("search x:", e && e.code);
+  }
+  var found = fromX;
+  if (found.length < 60) {
+    try {
+      var saved = await filterList(text, bookmarksPage, 40, Math.round(budgetMs * 0.2));
+      found = mergeItems(found, saved, 100);
+    } catch (e) {
+      // Si los guardados fallan, no se pierde lo que X ya trajo.
+      kino.log("saved scan:", e && e.code);
+    }
+  }
+  if (!found.length && xError) throw xError;
+  return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -1098,6 +1215,21 @@ export async function home() {
 
 export async function browse(ref, cursor) {
   requireSession();
+  // Resultados de una búsqueda de X: ref "x:<consulta codificada>" (la pantalla
+  // propia lo usa para el «Ver más» de sus filas), paginado con el cursor de X.
+  var xRef = /^x:(.+)$/.exec(String(ref || ""));
+  if (xRef) {
+    var raw = xRef[1];
+    try {
+      raw = decodeURIComponent(raw);
+    } catch (e) {
+      /* queda tal cual si no estaba codificado */
+    }
+    var xPage = await searchRaw(cursor || null, raw, "Top", 14000);
+    var xAnswer = { items: xPage.items };
+    if (xPage.next) xAnswer.next = xPage.next;
+    return xAnswer;
+  }
   var isHome = ref === "tl" || ref === "inicio";
   if (!isHome && ref !== "bm" && ref !== "guardados") {
     throw kino.error("not_found", "ref " + String(ref).slice(0, 40));
@@ -1115,18 +1247,26 @@ export async function search(query) {
   var text = query && typeof query.q === "string" ? query.q.trim() : "";
   if (!text) return [];
 
-  // Búsqueda con ámbito (mientras escribes en «Buscar en»): una sola página de X, rápido.
-  if (query && query.within) {
-    try {
-      var fast = await xSearch(rawQueryOf(text), null, 1);
-      if (fast.length) return fast;
-    } catch (e) {
-      kino.log("scoped:", e && e.code);
+  // «Buscar en» (búsqueda con ámbito): query.within es el ref de la fila
+  // «Ver más» donde la persona busca, no un interruptor. Dentro de los
+  // guardados o del Inicio se filtra esa misma lista; en cualquier otra
+  // lista se devuelve null y Kino filtra lo cargado por su cuenta.
+  var within = query && typeof query.within === "string" ? query.within : "";
+  if (within) {
+    if (within === "bm" || within === "guardados") {
+      return filterList(text, bookmarksPage, 40, 11000);
     }
+    if (within === "tl" || within === "inicio") {
+      return filterList(text, timelinePage, 20, 11000);
+    }
+    return null;
   }
 
-  if (hasOperators(text)) return xSearch(text);
+  // Los operadores de X (from:, min_faves:, lang:…) se pasan tal cual.
+  if (hasOperators(text)) return xSearch(text, null, 4, { timeoutMs: 12000 });
 
+  // @persona: todos los videos del perfil (pestaña Multimedia), no solo los
+  // que suelten las búsquedas.
   if (text.charAt(0) === "@") {
     var handle = text.slice(1).replace(/[^A-Za-z0-9_]/g, "");
     if (handle) {
@@ -1137,78 +1277,13 @@ export async function search(query) {
         kino.log("usermedia:", e && e.code);
       }
     }
-    return xSearch(rawQueryOf(text));
+    return xSearch(rawQueryOf(text), null, 4, { timeoutMs: 12000 });
   }
 
-  if (text.charAt(0) === "#") {
-    try {
-      var latest = await xSearch(rawQueryOf(text), "Latest");
-      var popular = await xSearch(rawQueryOf(text), "Top");
-      var merged = latest.slice();
-      var ids = {};
-      for (var t = 0; t < latest.length; t++) ids[latest[t].id] = true;
-      for (var p = 0; p < popular.length; p++) {
-        if (!ids[popular[p].id]) {
-          ids[popular[p].id] = true;
-          merged.push(popular[p]);
-        }
-      }
-      if (merged.length) return merged.slice(0, 100);
-    } catch (e) {
-      kino.log("hashtag:", e && e.code);
-    }
-    return xSearch(rawQueryOf(text));
-  }
-  var words = text.toLowerCase().split(/\s+/);
-  var wanted = [];
-  for (var i = 0; i < words.length; i++) {
-    if (words[i].length > 1) wanted.push(words[i]);
-  }
-  if (!wanted.length) wanted.push(text.toLowerCase());
-
-  var started = Date.now();
-  var cursor = null;
-  var found = [];
-  var seen = {};
-  for (var round = 0; round < 3; round++) {
-    var remaining = 12000 - (Date.now() - started);
-    if (remaining < 3000) break;
-    var page = await bookmarksPage(cursor, {
-      count: 40,
-      timeoutMs: Math.min(8000, remaining)
-    });
-    for (var j = 0; j < page.items.length; j++) {
-      var item = page.items[j];
-      var hay = (item.title + " " + (item.overview || "")).toLowerCase();
-      var hit = true;
-      for (var k = 0; k < wanted.length; k++) {
-        if (hay.indexOf(wanted[k]) < 0) {
-          hit = false;
-          break;
-        }
-      }
-      if (hit && !seen[item.id]) {
-        seen[item.id] = true;
-        found.push(item);
-      }
-    }
-    if (found.length >= 30 || !page.next) break;
-    cursor = page.next;
-  }
-  // Además de los guardados, se busca en X y se suman los videos que falten.
-  try {
-    var fromX = await xSearch(text + " filter:native_video");
-    for (var x = 0; x < fromX.length; x++) {
-      var extra = fromX[x];
-      if (!seen[extra.id]) {
-        seen[extra.id] = true;
-        found.push(extra);
-      }
-    }
-  } catch (e) {
-    kino.log("search x:", e && e.code);
-  }
-  return found.slice(0, 100);
+  // #etiqueta y palabras sueltas («Hinata Hyuga»): PRIMERO X —recientes y
+  // populares, varias páginas— y después los guardados que coincidan. Así
+  // aparecen todos los videos relacionados, no solo el guardado propio.
+  return searchEverywhere(text, 13000);
 }
 
 export async function resolve(ref) {
@@ -1428,6 +1503,194 @@ export async function validateSettings(values) {
     throw e;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Pantalla propia «Buscar en X» (capability "screen"): buscar cualquier tópico
+// o persona directamente en X, dentro de Kino. Nada de esto toca tus guardados
+// ni deja historial: los títulos siguen siendo 18+ como el resto del plugin.
+// ---------------------------------------------------------------------------
+
+var TOPIC_CHIPS = ["#anime", "cosplay", "#gaming", "música", "deportes", "#cine", "tráiler", "noticias"];
+
+// Cuántos resultados guarda la pantalla en su estado (el parche de estado
+// admite hasta 64 KB; sin sinopsis, 30 títulos van sobrados).
+var MAX_SCREEN_ITEMS = 30;
+
+// Copia ligera de un título para el estado de la pantalla: sin la sinopsis,
+// que es lo que más pesa. La ficha del título sale del ref, como siempre.
+function lightItem(item) {
+  var copy = {
+    id: item.id,
+    ref: item.ref,
+    title: item.title,
+    kind: "movie",
+    adult: true,
+    badges: ["X"]
+  };
+  if (item.poster) copy.poster = item.poster;
+  if (item.backdrop) copy.backdrop = item.backdrop;
+  if (item.year) copy.year = item.year;
+  if (item.quality) copy.quality = item.quality;
+  return copy;
+}
+
+export async function screen(arg) {
+  var state = (arg && arg.state) || {};
+  var inputs = state.inputs || {};
+  var q = typeof inputs.q === "string" ? inputs.q : "";
+
+  // Sin sesión: la propia pantalla explica cómo entrar y trae el formulario
+  // de ajustes del plugin (iniciar sesión, cookies, estado y la ayuda).
+  if (!signedIn()) {
+    return {
+      type: "Column",
+      padding: 16,
+      gap: 12,
+      children: [
+        {
+          type: "emptyState",
+          icon: "lock",
+          title: "Falta la sesión de X",
+          titleEn: "No X session",
+          text: "Entra con tu cuenta para buscar videos de X. Abajo puedes iniciar sesión o pegar las cookies.",
+          textEn: "Sign in with your account to search X videos. Sign in or paste your cookies below."
+        },
+        { type: "settings", keys: ["link", "cookies", "estado", "ayuda"] }
+      ]
+    };
+  }
+
+  // Sin <Form> a propósito: el campo y el botón mandan el mismo evento
+  // «buscar» cada uno por su lado, así el envío nunca se dispara dos veces.
+  var children = [
+    {
+      type: "TextField",
+      key: "q",
+      kind: "search",
+      fill: true,
+      labelText: "Buscar videos en X",
+      labelTextEn: "Search videos on X",
+      hintText: "Un tópico, una persona, @usuario, #etiqueta…",
+      hintTextEn: "A topic, a person, @user, #hashtag…",
+      value: q,
+      autofocus: true,
+      onSubmitted: { event: "buscar", timeoutMs: 30000 }
+    },
+    {
+      type: "ElevatedButton",
+      icon: "search",
+      labelText: "Buscar",
+      labelTextEn: "Search",
+      onPressed: { event: "buscar", timeoutMs: 30000 }
+    },
+    {
+      type: "Text",
+      style: "caption",
+      text: "Sugerencias",
+      textEn: "Suggestions"
+    },
+    {
+      type: "Chips",
+      key: "temas",
+      options: TOPIC_CHIPS.map(function (t) {
+        return { value: t, label: t };
+      }),
+      value: typeof inputs.temas === "string" ? inputs.temas : null,
+      onChanged: "tema"
+    }
+  ];
+
+  var results = state.results;
+  if (results && results.error) {
+    children.push({
+      type: "errorState",
+      title: "La búsqueda falló",
+      titleEn: "Search failed",
+      text: results.error
+    });
+    children.push({
+      type: "TextButton",
+      icon: "refresh",
+      labelText: "Reintentar",
+      labelTextEn: "Retry",
+      onPressed: { event: "buscar", timeoutMs: 30000 }
+    });
+  } else if (results && !results.items.length) {
+    children.push({
+      type: "emptyState",
+      icon: "search",
+      title: "Sin videos para «" + results.q + "»",
+      titleEn: 'No videos for "' + results.q + '"',
+      text: "Ningún video público de X coincide. Prueba otras palabras o quita algún término.",
+      textEn: "No public X video matches. Try other words or fewer terms."
+    });
+  } else if (results) {
+    children.push({
+      type: "Text",
+      style: "caption",
+      text: results.items.length + " videos de X · «" + results.q + "»",
+      textEn: results.items.length + ' X videos · "' + results.q + '"'
+    });
+    children.push({
+      type: "titleRail",
+      title: "Resultados de X",
+      titleEn: "X results",
+      items: results.items,
+      ref: "x:" + encodeURIComponent(results.raw),
+      size: "medium"
+    });
+  } else {
+    children.push({
+      type: "emptyState",
+      icon: "movie",
+      title: "Busca cualquier video de X",
+      titleEn: "Search any X video",
+      text: "Escribe un tópico o una persona («Hinata Hyuga») y verás todos los videos públicos relacionados, no solo tus guardados. También @usuario y #etiqueta.",
+      textEn: "Type a topic or a person to see every related public video, not just your bookmarks. Also @user and #hashtag."
+    });
+  }
+
+  return { type: "Column", padding: 16, gap: 12, children: children };
+}
+
+export async function screenEvent(event) {
+  var name = event && typeof event.name === "string" ? event.name : "";
+  if (name !== "buscar" && name !== "tema") return null;
+
+  var state = (event && event.state) || {};
+  var inputs = state.inputs || {};
+  var q = "";
+  var value = event.value;
+  if (typeof value === "string") {
+    q = value.trim();
+  } else if (value && typeof value === "object" && typeof value.q === "string") {
+    q = value.q.trim();
+  }
+  if (!q && typeof inputs.q === "string") q = inputs.q.trim();
+  if (!q) {
+    return { toast: { text: "Escribe qué buscar", textEn: "Type something to search" } };
+  }
+  if (!signedIn()) {
+    return { toast: { text: "Falta la sesión de X: inicia sesión en Ajustes", textEn: "No X session: sign in first" } };
+  }
+
+  var results;
+  try {
+    var items = await searchEverywhere(q, 25000);
+    results = { q: q, raw: rawQueryOf(q), items: items.slice(0, MAX_SCREEN_ITEMS).map(lightItem) };
+  } catch (e) {
+    var msg = e && e.userMessage ? e.userMessage : "X no respondió ahora. Inténtalo más tarde.";
+    results = { q: q, raw: rawQueryOf(q), error: msg };
+    kino.log("screen search:", e && e.code);
+  }
+  var patch = { results: results, inputs: { q: q } };
+  if (name === "tema") {
+    patch.inputs.temas = q;
+  } else if (typeof inputs.temas === "string") {
+    patch.inputs.temas = inputs.temas;
+  }
+  return { state: patch };
 }
 
 

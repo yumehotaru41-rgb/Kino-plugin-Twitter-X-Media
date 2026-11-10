@@ -1,11 +1,11 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca todos los videos de X: @usuario (su perfil completo), #etiqueta (recientes y populares) o cualquier palabra.",
+  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca todos los videos de X: @usuario (su perfil completo), #etiqueta (recientes y populares) o cualquier tópico o persona («Hinata Hyuga») con resultados de toda X, y con su propia pantalla «Buscar en X».",
   "color": "#1D9BF0",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
@@ -32,11 +32,20 @@
     "browse",
     "search",
     "scopedSearch",
-    "resolve"
+    "resolve",
+    "screen"
   ],
   "categories": [
     "adult"
   ],
+  "screen": {
+    "label": "Buscar en X",
+    "labelEn": "Search X",
+    "icon": "search",
+    "menuOpens": "screen",
+    "adult": true,
+    "opensFrom": ["menu", "settings"]
+  },
   "enhancements": {
     "20": {
       "visualBrowser": true

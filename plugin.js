@@ -841,21 +841,31 @@ async function timelinePage(cursor, options) {
 // Búsqueda en X: @usuario y #etiqueta traen videos directamente de X
 // ---------------------------------------------------------------------------
 
+const OP_USER_BY_SCREEN_NAME = "AMIBMjtxEEATh4z8V9GtRg";
+const OP_USER_MEDIA = "iTSlWbsmD00dAE7Sk9xvIw";
+
+// Los operadores de búsqueda de X (from:, since:, min_faves:, lang:…) se pasan tal cual.
+function hasOperators(text) {
+  return /(^|\s)(from|to|since|until|min_faves|min_retweets|min_replies|lang|filter|url|exclude|include|geocode):/i.test(text);
+}
+
 function rawQueryOf(text) {
+  if (hasOperators(text)) return text;
   if (text.charAt(0) === "@") {
     return "from:" + text.slice(1).replace(/[^A-Za-z0-9_]/g, "") + " filter:native_video";
   }
   var match = /^#([A-Za-z0-9_]+)/.exec(text);
-  return "#" + (match ? match[1] : text.replace(/[^A-Za-z0-9_]/g, "")) + " filter:native_video";
+  if (match) return "#" + match[1] + " filter:native_video";
+  return text + " filter:native_video";
 }
 
-async function searchRaw(cursor, rawQuery) {
+async function searchRaw(cursor, rawQuery, product) {
   var id = searchId();
   var variables = {
     rawQuery: rawQuery,
     count: 20,
     querySource: "typed_query",
-    product: "Latest"
+    product: product || "Latest"
   };
   if (cursor) variables.cursor = cursor;
   var query =
@@ -889,14 +899,14 @@ async function searchRaw(cursor, rawQuery) {
   return parsePage(json);
 }
 
-async function xSearch(rawQuery) {
+async function xSearch(rawQuery, product) {
   var items = [];
   var seen = {};
   var cursor = null;
-  for (var round = 0; round < 3; round++) {
+  for (var round = 0; round < 5; round++) {
     var page;
     try {
-      page = await searchRaw(cursor, rawQuery);
+      page = await searchRaw(cursor, rawQuery, product);
     } catch (e) {
       if (round === 0) throw e;
       break;
@@ -908,7 +918,104 @@ async function xSearch(rawQuery) {
         items.push(item);
       }
     }
-    if (items.length >= 60 || !page.next) break;
+    if (items.length >= 100 || !page.next) break;
+    cursor = page.next;
+  }
+  return items.slice(0, 100);
+}
+
+// ---------------------------------------------------------------------------
+// @persona: todos los videos del perfil, por la pestaña Multimedia de X
+// ---------------------------------------------------------------------------
+
+async function userIdOf(handle) {
+  var variables = { screen_name: handle };
+  var query =
+    "?variables=" +
+    encodeURIComponent(JSON.stringify(variables)) +
+    "&features=" +
+    encodeURIComponent(JSON.stringify(SEARCH_FEATURES)) +
+    "&fieldToggles=" +
+    encodeURIComponent(JSON.stringify({ withArticleRichContentState: false }));
+  var r = await xget(X + "/i/api/graphql/" + OP_USER_BY_SCREEN_NAME + "/UserByScreenName" + query, { timeoutMs: 12000 });
+  if (!r.ok) {
+    throw kino.error("unavailable", "user " + r.status, {
+      userMessage: "X no respondió al buscar esa cuenta. Inténtalo más tarde."
+    });
+  }
+  var json;
+  try {
+    json = r.json();
+  } catch (e) {
+    throw kino.error("unavailable", "user json", { userMessage: "X devolvió algo que no se entiende." });
+  }
+  var userId = "";
+  (function walk(o) {
+    if (!o || typeof o !== "object" || userId) return;
+    if (o.__typename === "User" && typeof o.rest_id === "string" && o.rest_id) {
+      userId = o.rest_id;
+      return;
+    }
+    for (var k in o) walk(o[k]);
+  })(json);
+  if (!userId) {
+    throw kino.error("not_found", "sin usuario " + handle, {
+      userMessage: "No se encontró @" + handle + " en X. Revisa el nombre."
+    });
+  }
+  return userId;
+}
+
+async function userMediaRaw(cursor, userId) {
+  var variables = {
+    userId: userId,
+    count: 20,
+    includePromotedContent: false,
+    withClientEventToken: false,
+    withBirdwatchNotes: false
+  };
+  if (cursor) variables.cursor = cursor;
+  var query =
+    "?variables=" +
+    encodeURIComponent(JSON.stringify(variables)) +
+    "&features=" +
+    encodeURIComponent(JSON.stringify(SEARCH_FEATURES));
+  var r = await xget(X + "/i/api/graphql/" + OP_USER_MEDIA + "/UserMedia" + query, { timeoutMs: 14000 });
+  if (!r.ok) {
+    throw kino.error("unavailable", "usermedia " + r.status, {
+      userMessage: "X no respondió al pedir los videos de esa cuenta."
+    });
+  }
+  var json;
+  try {
+    json = r.json();
+  } catch (e) {
+    throw kino.error("unavailable", "usermedia json", { userMessage: "X devolvió algo que no se entiende." });
+  }
+  return parsePage(json);
+}
+
+async function xUserMedia(handle) {
+  var userId = await userIdOf(handle);
+  var items = [];
+  var seen = {};
+  var cursor = null;
+  for (var round = 0; round < 5; round++) {
+    var page;
+    try {
+      page = await userMediaRaw(cursor, userId);
+    } catch (e) {
+      if (round === 0) throw e;
+      break;
+    }
+    for (var i = 0; i < page.items.length; i++) {
+      var item = page.items[i];
+      if (!seen[item.id]) {
+        seen[item.id] = true;
+        items.push(item);
+      }
+    }
+    if (items.length >= 100 || !page.next) break;
     cursor = page.next;
   }
   return items.slice(0, 100);
@@ -1006,7 +1113,38 @@ export async function search(query) {
   requireSession();
   var text = query && typeof query.q === "string" ? query.q.trim() : "";
   if (!text) return [];
-  if (text.charAt(0) === "@" || text.charAt(0) === "#") {
+  if (hasOperators(text)) return xSearch(text);
+
+  if (text.charAt(0) === "@") {
+    var handle = text.slice(1).replace(/[^A-Za-z0-9_]/g, "");
+    if (handle) {
+      try {
+        var own = await xUserMedia(handle);
+        if (own.length) return own;
+      } catch (e) {
+        kino.log("usermedia:", e && e.code);
+      }
+    }
+    return xSearch(rawQueryOf(text));
+  }
+
+  if (text.charAt(0) === "#") {
+    try {
+      var latest = await xSearch(rawQueryOf(text), "Latest");
+      var popular = await xSearch(rawQueryOf(text), "Top");
+      var merged = latest.slice();
+      var ids = {};
+      for (var t = 0; t < latest.length; t++) ids[latest[t].id] = true;
+      for (var p = 0; p < popular.length; p++) {
+        if (!ids[popular[p].id]) {
+          ids[popular[p].id] = true;
+          merged.push(popular[p]);
+        }
+      }
+      if (merged.length) return merged.slice(0, 100);
+    } catch (e) {
+      kino.log("hashtag:", e && e.code);
+    }
     return xSearch(rawQueryOf(text));
   }
   var words = text.toLowerCase().split(/\s+/);

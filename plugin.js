@@ -865,6 +865,17 @@ function hasOperators(text) {
   return /(^|\s)(from|to|since|until|min_faves|min_retweets|min_replies|lang|filter|url|exclude|include|geocode):/i.test(text);
 }
 
+// Quita los operadores (filter:, from:…) de una consulta cruda: deja solo
+// las palabras, para buscar coincidencias en los guardados.
+function stripOperators(raw) {
+  var parts = String(raw || "").split(/\s+/);
+  var keep = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] && !/^[A-Za-z_]+:/.test(parts[i])) keep.push(parts[i]);
+  }
+  return keep.join(" ").trim();
+}
+
 function rawQueryOf(text) {
   if (hasOperators(text)) return text;
   if (text.charAt(0) === "@") {
@@ -1228,7 +1239,11 @@ export async function home() {
 export async function browse(ref, cursor) {
   requireSession();
   // Resultados de una búsqueda de X: ref "x:<consulta codificada>" (la pantalla
-  // propia lo usa para el «Ver más» de sus filas), paginado con el cursor de X.
+  // propia lo usa para el «Ver más» de sus filas). La lista pagina DOS caudales
+  // de X a la vez — recientes y populares — y en la primera página suma los
+  // guardados que coinciden, como el feed de la pantalla. Si un caudal falla
+  // (X limita las peticiones con facilidad), se sigue con el otro; solo se
+  // muestra error cuando no queda nada de nada.
   var xRef = /^x:(.+)$/.exec(String(ref || ""));
   if (xRef) {
     var raw = xRef[1];
@@ -1237,9 +1252,88 @@ export async function browse(ref, cursor) {
     } catch (e) {
       /* queda tal cual si no estaba codificado */
     }
-    var xPage = await searchRaw(cursor || null, raw, "Top", 14000);
-    var xAnswer = { items: xPage.items };
-    if (xPage.next) xAnswer.next = xPage.next;
+
+    // Cursor propio: «<recientes>|<populares>». Una parte vacía: ese caudal
+    // ya se agotó (o falló) y no se vuelve a pedir.
+    var cursorLatest = "";
+    var cursorTop = "";
+    if (cursor) {
+      var halves = String(cursor).split("|");
+      cursorLatest = halves[0] || "";
+      cursorTop = halves[1] || "";
+    }
+    var wantLatest = !cursor || !!cursorLatest;
+    var wantTop = !cursor || !!cursorTop;
+
+    // Los dos caudales en paralelo: más resultados y a la mitad de tiempo.
+    var pLatest = wantLatest
+      ? searchRaw(cursorLatest || null, raw, "Latest", 10000).catch(function (e) {
+          return { __error: e };
+        })
+      : null;
+    var pTop = wantTop
+      ? searchRaw(cursorTop || null, raw, "Top", 10000).catch(function (e) {
+          return { __error: e };
+        })
+      : null;
+
+    var items = [];
+    var seen = {};
+    var add = function (list) {
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i];
+        if (item && !seen[item.id]) {
+          seen[item.id] = true;
+          items.push(item);
+        }
+      }
+    };
+
+    var xError = null;
+    var nextLatest = "";
+    var nextTop = "";
+
+    if (pLatest) {
+      var latestPage = await pLatest;
+      if (latestPage && latestPage.__error) {
+        xError = latestPage.__error;
+        kino.log("browse x latest:", xError && xError.code);
+      } else if (latestPage) {
+        add(latestPage.items);
+        nextLatest = latestPage.next || "";
+      }
+    }
+    if (pTop) {
+      var topPage = await pTop;
+      if (topPage && topPage.__error) {
+        xError = topPage.__error;
+        kino.log("browse x top:", xError && xError.code);
+      } else if (topPage) {
+        add(topPage.items);
+        nextTop = topPage.next || "";
+      }
+    }
+
+    // Primera página: los guardados que coinciden también entran, con las
+    // palabras del texto sin operadores (filter:, from:…).
+    if (!cursor && items.length < 40) {
+      var plain = stripOperators(raw);
+      if (plain) {
+        try {
+          var saved = await filterList(plain, bookmarksPage, 40, 5000);
+          add(saved);
+        } catch (e) {
+          // Si los guardados fallan, no se pierde lo que X ya trajo.
+          kino.log("browse x saved:", e && e.code);
+        }
+      }
+    }
+
+    if (!items.length && xError && !cursor) throw xError;
+    if (items.length > 100) items = items.slice(0, 100);
+
+    var xAnswer = { items: items };
+    if (nextLatest || nextTop) xAnswer.next = nextLatest + "|" + nextTop;
     return xAnswer;
   }
   var isHome = ref === "tl" || ref === "inicio";

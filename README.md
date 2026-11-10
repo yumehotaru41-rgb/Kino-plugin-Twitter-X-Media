@@ -52,7 +52,10 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
   plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y verás todos
   los videos públicos relacionados como un **feed con scroll al estilo de X**: una tarjeta por
-  publicación con su imagen, @autor, fecha, ❤ y vistas. Cada tarjeta abre su video en Kino; su botón
+  publicación con su imagen, @autor, fecha, ❤ y vistas, ordenado como la cronología de X (lo más
+  nuevo arriba). Además de videos, el feed mezcla las **fotos publicadas** del tópico (tuits de
+  imagen, con su proporción real y la insignia «Foto»; se abren en x.com). Cada tarjeta de video
+  abre su reproducción en Kino; su botón
   **Abrir en X** enseña la hoja «Abrir un enlace» de Kino y lleva a la publicación en x.com (en el TV,
   un QR para escanearlo con el teléfono), y **Ver más resultados** abre la lista completa, paginada.
   Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale

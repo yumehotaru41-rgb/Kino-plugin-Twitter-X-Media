@@ -772,6 +772,91 @@ function parsePage(json) {
   return { items: items, next: next };
 }
 
+// ---------------------------------------------------------------------------
+// Publicaciones que son FOTOS (no video): la pantalla propia las mezcla en
+// su feed, como la cronología de X. Nunca se convierten en títulos de Kino:
+// no hay video que reproducir; solo se ven en la pantalla y se abren en x.com.
+// ---------------------------------------------------------------------------
+
+// ¿Es una foto? Los GIF animados traen video_info y cuentan como video.
+function isPhoto(media) {
+  if (!media || typeof media.media_url_https !== "string" || !media.media_url_https) return false;
+  if (media.video_info || media.videoInfo) return false;
+  if (typeof media.type === "string" && media.type) return media.type === "photo";
+  return media.__typename === "MediaPhoto";
+}
+
+// Las fotos de una página de búsqueda, como publicaciones para el feed.
+function photoPostsOf(json, cap) {
+  var timeline = timelineOf(json);
+  if (!timeline) return [];
+  var entries = entriesOf(timeline);
+  var posts = [];
+  var seen = {};
+  var limit = cap || 20;
+  for (var i = 0; i < entries.length && posts.length < limit; i++) {
+    var tweets = tweetsInEntry(entries[i]);
+    for (var t = 0; t < tweets.length && posts.length < limit; t++) {
+      var tweet = unwrapTweet(tweets[t]);
+      if (!tweet) continue;
+      var legacy = tweet.legacy;
+      var tweetId = String(tweet.rest_id || (legacy && (legacy.id_str || legacy.id)) || "");
+      if (!/^\d{1,25}$/.test(tweetId) || seen[tweetId]) continue;
+      var media = mediaOf(tweet);
+      var image = "";
+      var photoCount = 0;
+      var width = 0;
+      var height = 0;
+      for (var mm = 0; mm < media.length; mm++) {
+        if (!isPhoto(media[mm])) continue;
+        photoCount++;
+        if (!image) {
+          image = media[mm].media_url_https;
+          var size = media[mm].original_info || {};
+          if (typeof size.width === "number" && size.width > 9 && size.width < 10000) width = Math.round(size.width);
+          if (typeof size.height === "number" && size.height > 9 && size.height < 10000) height = Math.round(size.height);
+        }
+      }
+      if (!image) continue;
+      seen[tweetId] = true;
+      var handle = handleOf(tweet);
+      var text = tweetText(tweet);
+      var firstLine = text.split("\n")[0].trim();
+      var title = firstLine || (handle ? "Foto de @" + handle : "Foto de X");
+      if (title.length > 200) title = title.slice(0, 200);
+      var post = {
+        kind: "foto",
+        id: "f" + tweetId,
+        ref: "f:" + tweetId,
+        title: title,
+        image: image + "?name=medium"
+      };
+      if (width && height) {
+        post.w = width;
+        post.h = height;
+      }
+      if (handle) {
+        post.by = "@" + handle;
+        post.web = X + "/" + handle + "/status/" + tweetId;
+      } else {
+        post.web = X + "/i/status/" + tweetId;
+      }
+      if (text.length > 280) text = text.slice(0, 277) + "…";
+      if (text) post.text = text;
+      var createdAt = legacy && typeof legacy.created_at === "string" ? legacy.created_at : "";
+      var when = createdAt ? Date.parse(createdAt) : NaN;
+      if (!isNaN(when)) post.at = when;
+      var parts = [];
+      if (photoCount > 1) parts.push(photoCount + " fotos");
+      var fav = legacy && typeof legacy.favorite_count === "number" ? legacy.favorite_count : 0;
+      if (fav) parts.push("♥ " + prettyCount(fav));
+      if (parts.length) post.stats = parts.join(" · ");
+      posts.push(post);
+    }
+  }
+  return posts;
+}
+
 async function bookmarksPage(cursor, options) {
   var json = await bookmarksRaw(cursor, options);
   return parsePage(json);
@@ -886,7 +971,7 @@ function rawQueryOf(text) {
   return text + " filter:native_video";
 }
 
-async function searchRaw(cursor, rawQuery, product, timeoutMs) {
+async function searchFetch(cursor, rawQuery, product, timeoutMs) {
   var id = searchId();
   var variables = {
     rawQuery: rawQuery,
@@ -923,7 +1008,11 @@ async function searchRaw(cursor, rawQuery, product, timeoutMs) {
       userMessage: "La búsqueda de X devolvió algo que no se entiende. Inténtalo más tarde."
     });
   }
-  return parsePage(json);
+  return json;
+}
+
+async function searchRaw(cursor, rawQuery, product, timeoutMs) {
+  return parsePage(await searchFetch(cursor, rawQuery, product, timeoutMs));
 }
 
 async function xSearch(rawQuery, product, rounds, options) {
@@ -1063,6 +1152,22 @@ async function searchEverywhere(text, budgetMs) {
   }
   if (!found.length && xError) throw xError;
   return found;
+}
+
+// Fotos públicas de X para un tópico: la misma búsqueda con «filter:images»,
+// una sola petición (recientes) para no pedirle demasiado a X. Si falla, la
+// pantalla muestra los videos igual: las fotos son un extra, nunca un error.
+async function photoSearch(text) {
+  var raw = text;
+  if (!hasOperators(raw)) {
+    if (raw.charAt(0) === "@") {
+      raw = "from:" + raw.slice(1).replace(/[^A-Za-z0-9_]/g, "") + " filter:images";
+    } else {
+      raw = raw + " filter:images";
+    }
+  }
+  var json = await searchFetch(null, raw, "Latest", 9000);
+  return photoPostsOf(json, 20).slice(0, 15);
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,6 +1728,10 @@ var TOPIC_CHIPS = ["#anime", "cosplay", "#gaming", "música", "deportes", "#cine
 // admite hasta 64 KB; título, texto recortado e imagen caben de sobra).
 var MAX_SCREEN_ITEMS = 30;
 
+// Tope del feed completo: los videos de arriba más las fotos mezcladas,
+// ordenadas como la cronología de X (lo más nuevo arriba).
+var MAX_FEED_ITEMS = 40;
+
 // «1,2 mil» / «3,4 M», al estilo de X.
 function prettyCount(n) {
   if (!n || n < 1) return "";
@@ -1672,6 +1781,7 @@ function feedPost(item) {
 // del video en Kino; «Abrir en X» enseña la hoja de Kino y lleva a la
 // publicación en x.com (en el TV, su QR para escanearlo con el teléfono).
 function feedCard(p) {
+  var isPhoto = p.kind === "foto";
   var children = [];
 
   if (p.by || p.at) {
@@ -1699,10 +1809,13 @@ function feedCard(p) {
   if (rest) children.push({ type: "Text", text: rest, style: "p", maxLines: 3 });
 
   if (p.image) {
+    // Las fotos se ven con su proporción real; los videos, en 16:9.
+    var aspect = "16:9";
+    if (isPhoto) aspect = p.w && p.h ? p.w + ":" + p.h : "1:1";
     children.push({
       type: "Image",
       url: p.image,
-      aspect: "16:9",
+      aspect: aspect,
       fit: "cover",
       fill: true,
       alt: p.title,
@@ -1711,17 +1824,22 @@ function feedCard(p) {
   }
 
   var meta = [];
-  if (p.quality) meta.push({ type: "Badge", text: p.quality });
+  if (isPhoto) {
+    meta.push({ type: "Badge", text: "Foto", textEn: "Photo" });
+  } else if (p.quality) {
+    meta.push({ type: "Badge", text: p.quality });
+  }
   if (p.stats) meta.push({ type: "Text", text: p.stats, style: "caption" });
-  var actions = [
-    {
+  var actions = [];
+  if (!isPhoto) {
+    actions.push({
       type: "TextButton",
       icon: "play",
       labelText: "Ver",
       labelTextEn: "Watch",
       onPressed: { event: "ver", arg: p.id }
-    }
-  ];
+    });
+  }
   if (p.web) {
     actions.push({
       type: "TextButton",
@@ -1741,7 +1859,8 @@ function feedCard(p) {
     variant: "outlined",
     padding: 12,
     gap: 8,
-    onTap: { event: "ver", arg: p.id },
+    // Una foto no se reproduce: tocar la tarjeta la abre en x.com.
+    onTap: isPhoto ? { event: "xweb", arg: p.id } : { event: "ver", arg: p.id },
     children: children
   };
 }
@@ -1842,11 +1961,17 @@ export async function screen(arg) {
     // completa con páginas (la que trae browse con los ref «x:»).
     var posts = results.posts;
     var count = typeof results.total === "number" ? results.total : posts.length;
+    var label = count + " videos";
+    var labelEn = count + " videos";
+    if (typeof results.photos === "number" && results.photos) {
+      label += " · " + results.photos + " fotos";
+      labelEn += " · " + results.photos + " photos";
+    }
     children.push({
       type: "Text",
       style: "caption",
-      text: count + " videos de X · «" + results.q + "»",
-      textEn: count + ' X videos · "' + results.q + '"'
+      text: label + " de X · «" + results.q + "»",
+      textEn: labelEn + ' from X · "' + results.q + '"'
     });
     var cards = [];
     for (var i = 0; i < posts.length; i++) cards.push(feedCard(posts[i]));
@@ -1955,18 +2080,54 @@ export async function screenEvent(event) {
   }
 
   var results;
+  var searchError = null;
+  // Las fotos se buscan EN PARALELO con los videos (una sola petición con
+  // «filter:images»): piden lo mismo pero no quitan tiempo. Si fallan, el
+  // feed simplemente queda con los videos; si fallan los videos, las fotos
+  // que haya se muestran igual.
+  var photosPromise = photoSearch(q).catch(function (e) {
+    kino.log("photo search:", e && e.code);
+    return [];
+  });
+  var items = [];
   try {
-    var items = await searchEverywhere(q, 25000);
+    items = await searchEverywhere(q, 25000);
+  } catch (e) {
+    searchError = e;
+    kino.log("screen search:", e && e.code);
+  }
+  var photos = await photosPromise;
+
+  // Un tuit con video ya está como video: su foto no se repite en el feed.
+  var videoTweets = {};
+  for (var v = 0; v < items.length; v++) {
+    var videoMatch = /^t:(\d{1,25}):/.exec(String(items[v].ref || ""));
+    if (videoMatch) videoTweets[videoMatch[1]] = true;
+  }
+  var posts = items.slice(0, MAX_SCREEN_ITEMS).map(feedPost);
+  for (var p = 0; p < photos.length; p++) {
+    var photo = photos[p];
+    var photoMatch = /^f(\d{1,25})$/.exec(String(photo.id || ""));
+    if (photoMatch && videoTweets[photoMatch[1]]) continue;
+    posts.push(photo);
+  }
+  // El feed ordenado como la cronología de X: lo más nuevo arriba.
+  posts.sort(function (a, b) {
+    return (b.at || 0) - (a.at || 0);
+  });
+  if (posts.length > MAX_FEED_ITEMS) posts = posts.slice(0, MAX_FEED_ITEMS);
+
+  if (!posts.length && searchError) {
+    var errMsg = searchError && searchError.userMessage ? searchError.userMessage : "X no respondió ahora. Inténtalo más tarde.";
+    results = { q: q, raw: rawQueryOf(q), error: errMsg };
+  } else {
     results = {
       q: q,
       raw: rawQueryOf(q),
       total: items.length,
-      posts: items.slice(0, MAX_SCREEN_ITEMS).map(feedPost)
+      photos: photos.length,
+      posts: posts
     };
-  } catch (e) {
-    var msg = e && e.userMessage ? e.userMessage : "X no respondió ahora. Inténtalo más tarde.";
-    results = { q: q, raw: rawQueryOf(q), error: msg };
-    kino.log("screen search:", e && e.code);
   }
   var patch = { results: results, inputs: { q: q } };
   if (name === "tema") {

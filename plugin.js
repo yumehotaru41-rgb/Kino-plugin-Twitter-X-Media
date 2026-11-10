@@ -899,11 +899,12 @@ async function searchRaw(cursor, rawQuery, product) {
   return parsePage(json);
 }
 
-async function xSearch(rawQuery, product) {
+async function xSearch(rawQuery, product, rounds) {
   var items = [];
   var seen = {};
   var cursor = null;
-  for (var round = 0; round < 5; round++) {
+  var maxRounds = rounds || 5;
+  for (var round = 0; round < maxRounds; round++) {
     var page;
     try {
       page = await searchRaw(cursor, rawQuery, product);
@@ -1113,6 +1114,17 @@ export async function search(query) {
   requireSession();
   var text = query && typeof query.q === "string" ? query.q.trim() : "";
   if (!text) return [];
+
+  // Búsqueda con ámbito (mientras escribes en «Buscar en»): una sola página de X, rápido.
+  if (query && query.within) {
+    try {
+      var fast = await xSearch(rawQueryOf(text), null, 1);
+      if (fast.length) return fast;
+    } catch (e) {
+      kino.log("scoped:", e && e.code);
+    }
+  }
+
   if (hasOperators(text)) return xSearch(text);
 
   if (text.charAt(0) === "@") {

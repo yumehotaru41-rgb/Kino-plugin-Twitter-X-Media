@@ -54,7 +54,8 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - **Búsqueda**: en tus guardados y en toda X. `@usuario` trae **todos los videos del perfil**
   (pestaña Multimedia), `#etiqueta` combina los recientes y los más populares (hasta cinco páginas),
   cualquier palabra suma los videos públicos de X, y los operadores de X (`from:`, `since:`,
-  `min_faves:`, `lang:`…) se pasan tal cual.
+  `min_faves:`, `lang:`…) se pasan tal cual. En la búsqueda de Kino, «Buscar en» permite elegir
+  este plugin y ver los videos mientras escribes (búsqueda con ámbito).
 - El póster y el fondo salen del fotograma que X publica para cada video; el título, de la primera
   línea del tuit; la sinopsis, del texto completo.
 

@@ -82,11 +82,18 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
   guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
   permite pegarlo a mano: para la búsqueda, escribe `search:` seguido del código de la petición
   «SearchTimeline» (visible en x.com ▸ F12 ▸ Red); para los guardados, `bookmarks:` seguido del
-  código de «Bookmarks». El propio mensaje de error de la búsqueda explica cómo encontrarlo.
+  código de «Bookmarks».
+- Para buscar, X **exige además un sello anti-bot** (`x-client-transaction-id`): un número que su
+  web calcula en el navegador a partir de la propia página de inicio de X. Sin él la búsqueda da
+  404 — no es el límite de peticiones (eso da 429). Desde la 1.8.0 el plugin genera ese sello
+  igual que la web de X: lee la página de inicio y su archivo `ondemand.s` y lo guarda 12 horas,
+  así que la primera búsqueda tras instalar o actualizar tarda un poco más. Guardados, Inicio y
+  perfiles no piden el sello: por eso esas filas siempre funcionaron y la búsqueda no.
 - La URL de cada video se guarda en la caché del plugin (hasta 120 videos) para que reproducir no
-  cueste otra petición. «Limpiar la caché de videos» la vacía.
-- Solo videos: los tuits con fotos o solo texto no aparecen. No se pueden descargar (el plugin no
-  declara `download`) y no hay DRM de por medio.
+  cueste otra petición. «Limpiar la caché de videos» la vacía (y rehace el sello de la búsqueda).
+- Como títulos de Kino solo aparecen los tuits **con video**; los tuits con fotos o solo texto no
+  se pueden reproducir. La pantalla «Buscar en X» sí muestra también las fotos publicadas. No se
+  pueden descargar (el plugin no declara `download`) y no hay DRM de por medio.
 - Cuentas protegidas: el servicio público de X que se usa como respaldo para una URL suelta no ve
   esos tuits; en ese caso el plugin recorre tus guardados, que sí funcionan con tu sesión.
 - Límites de X: si abres muchas páginas seguidas, X puede responder 429 y Kino lo mostrará como

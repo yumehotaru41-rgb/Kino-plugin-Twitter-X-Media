@@ -7,8 +7,9 @@
 //
 // Cómo funciona: con la sesión de la persona el plugin pide la lista de Elementos guardados con la
 // misma consulta GraphQL que usa la web de X, se queda con las entradas que traen video y las
-// convierte en títulos de Kino. La URL de cada video queda en la caché del plugin, así reproducir
-// no cuesta otra petición.
+// convierte en títulos de Kino. La URL de cada video NO se guarda para reutilizarla: X renueva los
+// enlaces en cada recarga de página y una URL guardada caduca en minutos, así que al reproducir
+// siempre se pide una URL fresca (la caché queda solo como último recurso).
 //
 // Nota honesta: la consulta interna de X no es una API pública. X cambia su
 // identificador de vez en cuando (el plugin intenta descubrir el nuevo leyendo
@@ -20,9 +21,11 @@
 // búsqueda pública de X.
 //
 // Además de las filas del Inicio, el plugin trae su propia pantalla «Buscar en X» (capability
-// "screen"): un buscador de tópicos, personas, @usuarios y #etiquetas que recorre el Inicio y
-// los guardados — lo que el plugin puede cargar con tu sesión — y arma un feed con lo que
-// coincida, con videos y fotos.
+// "screen"): al abrirse muestra el feed con lo último que cargó del Inicio y de los guardados
+// (catálogo en kino.storage, capability "storageLarge"), y el buscador de tópicos, personas,
+// @usuarios y #etiquetas filtra ese material y suma lo que cargue de X en el momento. El job de
+// segundo plano (capability "schedule", manifest jobs) refresca el Inicio y los guardados para
+// que el catálogo no envejezca.
 
 const X = "https://x.com";
 const SYNDICATION = "https://cdn.syndication.twimg.com";
@@ -650,6 +653,143 @@ function cachePut(key, record) {
 }
 
 // ---------------------------------------------------------------------------
+// Catálogo de lo cargado (kino.storage, capability "storageLarge": 16 MiB).
+// Aquí queda lo que el plugin ya vio del Inicio y de los guardados — videos y
+// fotos, sin URLs de video (esas caducan: X las renueva en cada recarga) —
+// para que la pantalla «Buscar en X» muestre un feed al abrirse y la búsqueda
+// local tenga con qué responder aunque X no conteste. El job de segundo plano
+// lo mantiene al día.
+// ---------------------------------------------------------------------------
+
+const CATALOG_KEY = "catalog:v1";
+const CATALOG_MAX_VIDEOS = 300;
+const CATALOG_MAX_PHOTOS = 300;
+const CATALOG_MAX_CHARS = 150000;
+
+function readCatalog() {
+  var raw = kino.storage.get(CATALOG_KEY);
+  if (!raw) return { v: [], p: [] };
+  try {
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { v: [], p: [] };
+    return {
+      v: Array.isArray(parsed.v) ? parsed.v : [],
+      p: Array.isArray(parsed.p) ? parsed.p : []
+    };
+  } catch (e) {
+    return { v: [], p: [] };
+  }
+}
+
+// Versión delgada de un título de Kino para el catálogo: lo justo para la
+// tarjeta del feed y para filtrar por palabras. Sin overview larga (200).
+function slimVideo(item) {
+  var slim = {
+    id: item.id,
+    ref: item.ref,
+    title: item.title,
+    kind: "movie",
+    adult: true,
+    badges: ["X"]
+  };
+  if (item.poster) slim.poster = item.poster;
+  if (item.backdrop) slim.backdrop = item.backdrop;
+  if (item.handle) slim.handle = item.handle;
+  if (item.posted) slim.posted = item.posted;
+  if (item.fav) slim.fav = item.fav;
+  if (item.views) slim.views = item.views;
+  if (item.quality) slim.quality = item.quality;
+  if (typeof item.overview === "string" && item.overview) {
+    slim.overview = item.overview.slice(0, 200);
+  }
+  return slim;
+}
+
+// Suma videos y fotos al catálogo: lo nuevo queda primero, sin duplicados,
+// con tope de entradas y de caracteres (el job solo puede escribir 256 KB).
+function catalogRemember(videos, photos) {
+  try {
+    var cat = readCatalog();
+    var seenV = {};
+    var seenP = {};
+    var i;
+    for (i = 0; i < cat.v.length; i++) seenV[cat.v[i].id] = true;
+    for (i = 0; i < cat.p.length; i++) seenP[cat.p[i].id] = true;
+    var added = false;
+    for (i = 0; i < videos.length; i++) {
+      var v = videos[i];
+      if (!v || !v.id || seenV[v.id]) continue;
+      seenV[v.id] = true;
+      cat.v.unshift(slimVideo(v));
+      added = true;
+    }
+    for (i = 0; i < photos.length; i++) {
+      var p = photos[i];
+      if (!p || !p.id || seenP[p.id]) continue;
+      seenP[p.id] = true;
+      cat.p.unshift(p);
+      added = true;
+    }
+    if (!added) return;
+    if (cat.v.length > CATALOG_MAX_VIDEOS) cat.v = cat.v.slice(0, CATALOG_MAX_VIDEOS);
+    if (cat.p.length > CATALOG_MAX_PHOTOS) cat.p = cat.p.slice(0, CATALOG_MAX_PHOTOS);
+    var text = JSON.stringify(cat);
+    while (text.length > CATALOG_MAX_CHARS && (cat.v.length > 20 || cat.p.length > 20)) {
+      // Se recorta por la mitad del lado más largo, hasta caber.
+      if (cat.v.length >= cat.p.length && cat.v.length > 20) {
+        cat.v = cat.v.slice(0, Math.floor(cat.v.length / 2));
+      } else if (cat.p.length > 20) {
+        cat.p = cat.p.slice(0, Math.floor(cat.p.length / 2));
+      } else {
+        cat.v = cat.v.slice(0, Math.floor(cat.v.length / 2));
+      }
+      text = JSON.stringify(cat);
+    }
+    kino.storage.set(CATALOG_KEY, text);
+  } catch (e) {
+    kino.log("catalog:", e && e.message);
+  }
+}
+
+// El feed de arranque de la pantalla: lo último del catálogo, videos y fotos
+// mezclados y ordenados como la cronología de X (lo más nuevo arriba).
+function catalogFeed() {
+  var cat = readCatalog();
+  var posts = [];
+  var i;
+  for (i = 0; i < cat.v.length; i++) posts.push(feedPost(cat.v[i]));
+  for (i = 0; i < cat.p.length; i++) posts.push(cat.p[i]);
+  posts.sort(function (a, b) {
+    return (b.at || 0) - (a.at || 0);
+  });
+  return posts.slice(0, MAX_FEED_ITEMS);
+}
+
+// Lo del catálogo que coincide con las palabras buscadas.
+function catalogMatches(wanted) {
+  var cat = readCatalog();
+  var items = [];
+  var photos = [];
+  var i;
+  for (i = 0; i < cat.v.length; i++) {
+    if (matchesWords(cat.v[i], wanted)) items.push(cat.v[i]);
+  }
+  for (i = 0; i < cat.p.length; i++) {
+    var pic = cat.p[i];
+    var hay = ((pic.title || "") + " " + (pic.text || "") + " " + (pic.by || "")).toLowerCase();
+    var ok = true;
+    for (var w = 0; w < wanted.length; w++) {
+      if (hay.indexOf(wanted[w]) < 0) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) photos.push(pic);
+  }
+  return { items: items, photos: photos };
+}
+
+// ---------------------------------------------------------------------------
 // Títulos de Kino
 // ---------------------------------------------------------------------------
 
@@ -779,6 +919,9 @@ function parsePage(json) {
 
   if (dirty) writeMediaCache(cache);
   if (items.length > 100) items = items.slice(0, 100);
+  // Todo lo cargado queda en el catálogo (sin URLs de video, que caducan):
+  // la pantalla «Buscar en X» y la búsqueda local lo aprovechan después.
+  if (items.length) catalogRemember(items, []);
   return { items: items, next: next };
 }
 
@@ -997,7 +1140,9 @@ function wordsOf(text) {
 }
 
 function matchesWords(item, wanted) {
-  var hay = (item.title + " " + (item.overview || "")).toLowerCase();
+  var hay = item.title + " " + (item.overview || "");
+  if (item.handle) hay += " @" + item.handle;
+  hay = hay.toLowerCase();
   for (var i = 0; i < wanted.length; i++) {
     if (hay.indexOf(wanted[i]) < 0) return false;
   }
@@ -1051,6 +1196,23 @@ async function loadedSearch(text, budgetMs) {
   var seenPhotos = {};
   var started = Date.now();
 
+  // Primero el catálogo (kino.storage): lo que el plugin ya cargó antes del
+  // Inicio y los guardados responde al instante, sin red. Después la red
+  // suma lo nuevo que coincida.
+  var fromCatalog = catalogMatches(wanted);
+  for (var c = 0; c < fromCatalog.items.length; c++) {
+    if (!seenItems[fromCatalog.items[c].id]) {
+      seenItems[fromCatalog.items[c].id] = true;
+      items.push(fromCatalog.items[c]);
+    }
+  }
+  for (var cp = 0; cp < fromCatalog.photos.length; cp++) {
+    if (!seenPhotos[fromCatalog.photos[cp].id]) {
+      seenPhotos[fromCatalog.photos[cp].id] = true;
+      photos.push(fromCatalog.photos[cp]);
+    }
+  }
+
   // Una página de cualquier lista: suma los videos y las fotos que coincidan.
   function take(json) {
     var page = { items: [], next: "" };
@@ -1059,18 +1221,20 @@ async function loadedSearch(text, budgetMs) {
     } catch (e) {
       /* página inservible: se sigue con la siguiente */
     }
+    // Lo que se carga queda en el catálogo para la próxima búsqueda.
+    var pics = [];
+    try {
+      pics = photoPostsOf(json, 40);
+    } catch (e) {
+      /* sin fotos en esta página */
+    }
+    if (page.items.length || pics.length) catalogRemember(page.items, pics);
     for (var i = 0; i < page.items.length; i++) {
       var item = page.items[i];
       if (!seenItems[item.id] && matchesWords(item, wanted)) {
         seenItems[item.id] = true;
         items.push(item);
       }
-    }
-    var pics = [];
-    try {
-      pics = photoPostsOf(json, 40);
-    } catch (e) {
-      /* sin fotos en esta página */
     }
     for (var p = 0; p < pics.length; p++) {
       var pic = pics[p];
@@ -1391,8 +1555,18 @@ export async function resolve(ref) {
   var tweetId = match[1];
   var index = Number(match[2]);
 
-  var record = readMediaCache()[tweetId + ":" + index];
-  if (!record) record = await lookupVideo(tweetId, index);
+  // X renueva las URLs de sus videos en cada recarga de página: una URL
+  // guardada caduca a los poco minutos. Por eso la URL SIEMPRE se pide
+  // fresca (el servicio público de X para un tuit suelto, y si no, una
+  // página de guardados/Inicio que la traiga de nuevo); la caché solo
+  // sirve de último recurso si ninguna de las dos vías contesta.
+  var record = null;
+  try {
+    record = await lookupVideo(tweetId, index);
+  } catch (e) {
+    kino.log("lookup:", e && e.code);
+  }
+  if (!record) record = readMediaCache()[tweetId + ":" + index];
   if (!record || (!record.v && !record.h)) {
     throw kino.error("not_found", "sin url para " + ref, {
       userMessage: "Ese video ya no está disponible en X. Actualiza el Inicio y vuelve a intentar."
@@ -1572,12 +1746,14 @@ export async function action(key) {
     kino.cookies.clear();
     kino.storage.remove(ACCOUNT_KEY);
     kino.storage.remove(MEDIA_KEY);
+    kino.storage.remove(CATALOG_KEY);
     return { message: "Sesión de X cerrada en este plugin.", clearSettings: ["cookies"] };
   }
 
   if (key === "limpiar") {
     kino.storage.remove(MEDIA_KEY);
-    return { message: "Caché de videos vaciada: se vuelve a leer de X." };
+    kino.storage.remove(CATALOG_KEY);
+    return { message: "Caché y catálogo vaciados: se vuelve a leer de X." };
   }
 
   return null;
@@ -1601,6 +1777,37 @@ export async function validateSettings(values) {
     throw e;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Trabajo en segundo plano (capability "schedule", manifest jobs): refresca el
+// Inicio y los guardados y deja lo cargado en el catálogo, para que la pantalla
+// «Buscar en X» tenga feed y la búsqueda local tenga material aunque X tarde.
+// Límites del job: 20 s, 10 peticiones, 256 KB escritos — dos páginas de cada
+// lista caben de sobra.
+// ---------------------------------------------------------------------------
+
+export async function job(ctx) {
+  if (!cookieString() || !signedIn()) return;
+  var videos = [];
+  var photos = [];
+  try {
+    var home = await timelineRaw(null, { count: 40, timeoutMs: 9000 });
+    var homePage = parsePage(home);
+    videos = videos.concat(homePage.items);
+    photos = photos.concat(photoPostsOf(home, 40));
+  } catch (e) {
+    kino.log("job inicio:", e && e.code);
+  }
+  try {
+    var saved = await bookmarksRaw(null, { count: 40, timeoutMs: 9000 });
+    var savedPage = parsePage(saved);
+    videos = videos.concat(savedPage.items);
+    photos = photos.concat(photoPostsOf(saved, 40));
+  } catch (e) {
+    kino.log("job guardados:", e && e.code);
+  }
+  if (videos.length || photos.length) catalogRemember(videos, photos);
 }
 
 // ---------------------------------------------------------------------------
@@ -1857,8 +2064,8 @@ export async function screen(arg) {
     children.push({
       type: "Text",
       style: "caption",
-      text: label + " de X · «" + results.q + "»",
-      textEn: labelEn + ' from X · "' + results.q + '"'
+      text: results.q ? label + " de X · «" + results.q + "»" : label + " de tu Inicio y tus guardados",
+      textEn: results.q ? labelEn + ' from X · "' + results.q + '"' : labelEn + " from your Home and bookmarks"
     });
     var cards = [];
     for (var i = 0; i < posts.length; i++) cards.push(feedCard(posts[i]));
@@ -1878,14 +2085,37 @@ export async function screen(arg) {
     });
     children.push({ type: "ListView", flex: 1, gap: 10, items: cards });
   } else {
-    children.push({
-      type: "emptyState",
-      icon: "movie",
-      title: "Busca en tu Inicio y tus guardados",
-      titleEn: "Search your Home and bookmarks",
-      text: "Escribe un tópico, una persona, @usuario o #etiqueta: la búsqueda recorre los videos y fotos de tu Inicio y tus guardados de X y arma un feed con lo que coincida.",
-      textEn: "Type a topic, a person, @user or #hashtag: search goes through the videos and photos of your X Home and bookmarks and builds a feed with the matches."
-    });
+    // Al abrir la pantalla sin buscar nada: el feed con lo último que el
+    // plugin cargó del Inicio («Para ti», las filas que X sugiere) y de los
+    // guardados, sacado del catálogo — al instante, sin esperar a X.
+    var feed = catalogFeed();
+    if (feed.length) {
+      children.push({
+        type: "Text",
+        style: "caption",
+        text: "Lo último de tu Inicio y tus guardados · toca Buscar para filtrar",
+        textEn: "Latest from your Home and bookmarks · tap Search to filter"
+      });
+      var feedCards = [];
+      for (var f = 0; f < feed.length; f++) feedCards.push(feedCard(feed[f]));
+      children.push({ type: "ListView", flex: 1, gap: 10, items: feedCards });
+    } else {
+      children.push({
+        type: "emptyState",
+        icon: "movie",
+        title: "Aún no hay videos cargados",
+        titleEn: "No videos loaded yet",
+        text: "Toca «Cargar videos de X» para traer los del Inicio y tus guardados; quedan en el catálogo del plugin y desde ahí se buscan y se ven. También puedes activar el refresco en segundo plano en Ajustes ▸ Twitter/X Media.",
+        textEn: "Tap \"Load videos from X\" to bring the ones from your Home and bookmarks; they stay in the plugin's catalog, where search and this feed read from. You can also turn on the background refresh in Settings."
+      });
+      children.push({
+        type: "ElevatedButton",
+        icon: "refresh",
+        labelText: "Cargar videos de X",
+        labelTextEn: "Load videos from X",
+        onPressed: { event: "cargar", timeoutMs: 30000 }
+      });
+    }
   }
 
   // «fill»: el buscador queda arriba fijo y la ListView, con flex, se
@@ -1948,7 +2178,7 @@ export async function screenEvent(event) {
     return { go: { title: { ref: post.ref, kind: "movie", id: post.id, title: post.title, adult: true } } };
   }
 
-  if (name !== "buscar" && name !== "tema") return null;
+  if (name !== "buscar" && name !== "tema" && name !== "cargar") return null;
 
   var inputs = state.inputs || {};
   var q = "";
@@ -1959,7 +2189,8 @@ export async function screenEvent(event) {
     q = value.q.trim();
   }
   if (!q && typeof inputs.q === "string") q = inputs.q.trim();
-  if (!q) {
+  // «cargar» no necesita palabras: trae todo lo que haya en Inicio y guardados.
+  if (!q && name !== "cargar") {
     return { toast: { text: "Escribe qué buscar", textEn: "Type something to search" } };
   }
   if (!signedIn()) {
@@ -2021,5 +2252,6 @@ export async function screenEvent(event) {
   }
   return { state: patch };
 }
+
 
 

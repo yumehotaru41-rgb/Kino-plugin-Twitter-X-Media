@@ -8,6 +8,8 @@ así que no queda historial de lo que ves.
 
 Incluye su **menú de inicio de sesión**: una ventana de X que se abre dentro de Kino para que entres
 con tu cuenta, y un campo para pegar las cookies a mano cuando el aparato no puede abrir esa ventana.
+Trae además su **pantalla «Buscar en X»** con feed de lo último de tu Inicio y tus guardados, un
+**catálogo** local de lo cargado y un **refresco en segundo plano** opcional.
 
 ## Qué necesitas
 
@@ -50,9 +52,10 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados y más guardados
   (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
 - **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
-  plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y la búsqueda
-  recorre **tu Inicio y tus guardados de X** — lo que el plugin puede cargar con tu sesión — y arma un
-  **feed con scroll al estilo de X**: una tarjeta por
+  plugins en el teléfono) o desde su página de ajustes. **Al abrirse ya muestra un feed**: lo último
+  de tu Inicio («Para ti», las filas que X te sugiere) y de tus guardados, guardado en el catálogo
+  del plugin. El buscador **filtra ese catálogo al instante** y suma lo que cargue de X en el
+  momento, en un **feed con scroll al estilo de X**: una tarjeta por
   publicación con su imagen, @autor, fecha, ❤ y vistas, ordenado como la cronología de X (lo más
   nuevo arriba). Además de videos, el feed mezcla las **fotos publicadas** del tópico (tuits de
   imagen, con su proporción real y la insignia «Foto»; se abren en x.com). Cada tarjeta de video
@@ -63,15 +66,18 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
   tópico no aparece en tu Inicio o guardados, la pantalla lo dice sin rodeos.
   Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale
   con el código desbloqueado, y sus resultados tampoco quedan en tu historial.
+- **Refresco en segundo plano** (opcional, ajuste «Refresco en segundo plano»): un trabajo de Kino
+  (capability `schedule`) actualiza el Inicio y tus guardados cada cierto tiempo — elige cada
+  cuánto en Ajustes ▸ Twitter/X Media — para que la pantalla «Buscar en X» tenga material reciente
+  sin que abras el plugin antes. Apágalo cuando quieras desde su interruptor.
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
   ofrece HLS, Kino lo reproduce igual. Las otras resoluciones quedan en el menú **Servidor** del
   reproductor.
-- **Búsqueda de Kino**: en tus guardados y en toda X. `@usuario` trae **todos los videos del perfil**
-  (pestaña Multimedia), `#etiqueta` combina los recientes y los más populares, cualquier tópico o
-  persona («Hinata Hyuga») trae **todos los videos relacionados de X primero** (recientes y
-  populares, varias páginas) y después los guardados que coincidan, y los operadores de X (`from:`,
-  `since:`, `min_faves:`, `lang:`…) se pasan tal cual. En «Buscar en» dentro de una fila de guardados
-  o del Inicio, la búsqueda filtra esa lista; en otras listas filtra Kino.
+- **Búsqueda de Kino**: `@usuario` trae **todos los videos del perfil** (pestaña Multimedia, que no
+  pide sello anti-bot); cualquier otra consulta — tópico, persona, `#etiqueta`, operadores de X
+  (`from:`, `since:`, `min_faves:`, `lang:`…) — busca en el catálogo del plugin y carga más de tu
+  Inicio y tus guardados para completar. En «Buscar en» dentro de una fila de guardados o del
+  Inicio, la búsqueda filtra esa lista; en otras listas filtra Kino.
 - El póster y el fondo salen del fotograma que X publica para cada video; el título, de la primera
   línea del tuit; la sinopsis, del texto completo.
 
@@ -88,11 +94,18 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
   un sello anti-bot (`x-client-transaction-id`) que su web calcula en el navegador y, aun
   reproduciendo ese cálculo exactamente (se intentó en la 1.8.0, validado contra implementaciones
   de referencia abiertas), X siguió rechazando las peticiones que no salen de su navegador. Por eso
-  la pantalla «Buscar en X» no consulta la búsqueda de X: recorre tu Inicio y tus guardados y
-  filtra por las palabras de la consulta. Es lo único que X permite hoy a una app así; si X
-  cambiara de postura, la búsqueda pública podría volver en una versión futura.
-- La URL de cada video se guarda en la caché del plugin (hasta 120 videos) para que reproducir no
-  cueste otra petición. «Limpiar la caché de videos» la vacía.
+  la pantalla «Buscar en X» no consulta la búsqueda de X: filtra el catálogo del plugin — lo
+  cargado de tu Inicio y tus guardados — por las palabras de la consulta. Es lo único que X
+  permite hoy a una app así; si X cambiara de postura, la búsqueda pública podría volver en una
+  versión futura.
+- **El catálogo** (capability `storageLarge`: 16 MiB de `kino.storage`) guarda lo que el plugin ya
+  cargó del Inicio y de los guardados — títulos, autores, fechas e imágenes, **sin URLs de video** —
+  para que la pantalla abra con feed y la búsqueda responda sin esperar a X. «Limpiar la caché y el
+  catálogo» lo vacía; cerrar sesión también.
+- **X renueva las URLs de sus videos en cada recarga de página**: una URL guardada caduca en
+  minutos. Por eso, al reproducir, el plugin **siempre pide una URL fresca** (al servicio público
+  de X para ese tuit, y si no, releyendo una página con tu sesión); la caché de URLs queda solo
+  como último recurso si ninguna de las dos vías contesta.
 - Como títulos de Kino solo aparecen los tuits **con video**; los tuits con fotos o solo texto no
   se pueden reproducir. La pantalla «Buscar en X» sí muestra también las fotos publicadas. No se
   pueden descargar (el plugin no declara `download`) y no hay DRM de por medio.
@@ -136,4 +149,5 @@ node sdk/run.mjs . home
 `auth_required`, que es lo esperado. El banco de pruebas de este repositorio (`.dev/test.mjs`, fuera
 del plugin publicado) corre `home`, `browse`, `search`, `resolve`, `action`, `settingsStatus` y
 `validateSettings` contra un `kino` falso, sin red.
+
 

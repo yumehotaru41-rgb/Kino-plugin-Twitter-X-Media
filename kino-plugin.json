@@ -1,11 +1,11 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Busca todos los videos de X: @usuario, #etiqueta o cualquier tópico («Hinata Hyuga»). Su pantalla «Buscar en X» muestra los resultados como un feed estilo X — videos y también fotos publicadas, con imagen, autor, fecha, ❤ y vistas — y un botón para abrir cada publicación en x.com.",
+  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve, en Kino, los videos que guardaste en Elementos guardados y los del Inicio. Su pantalla «Buscar en X» busca dentro de tu Inicio y tus guardados — lo que X sí deja cargar con tu sesión — y muestra el resultado como un feed estilo X: videos y fotos con imagen, autor, fecha, ❤ y vistas, y un botón para abrir cada publicación en x.com.",
   "color": "#1D9BF0",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
@@ -135,8 +135,8 @@
       "label": "Identificador de la API (avanzado)",
       "labelEn": "API identifier (advanced)",
       "type": "text",
-      "hint": "Déjalo vacío. Si la búsqueda da 404: pega search:código de SearchTimeline",
-      "hintEn": "Leave it empty. If search gives a 404: paste search:SearchTimeline code"
+      "hint": "Déjalo vacío. Si los guardados dan 404: pega bookmarks:código de Bookmarks",
+      "hintEn": "Leave it empty. If bookmarks give a 404: paste bookmarks:Bookmarks code"
     },
     {
       "key": "limpiar",

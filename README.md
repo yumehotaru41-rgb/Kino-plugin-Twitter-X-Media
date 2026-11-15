@@ -50,14 +50,17 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados y más guardados
   (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
 - **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
-  plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y verás todos
-  los videos públicos relacionados como un **feed con scroll al estilo de X**: una tarjeta por
+  plugins en el teléfono) o desde su página de ajustes. Escribe un tópico o una persona y la búsqueda
+  recorre **tu Inicio y tus guardados de X** — lo que el plugin puede cargar con tu sesión — y arma un
+  **feed con scroll al estilo de X**: una tarjeta por
   publicación con su imagen, @autor, fecha, ❤ y vistas, ordenado como la cronología de X (lo más
   nuevo arriba). Además de videos, el feed mezcla las **fotos publicadas** del tópico (tuits de
   imagen, con su proporción real y la insignia «Foto»; se abren en x.com). Cada tarjeta de video
   abre su reproducción en Kino; su botón
   **Abrir en X** enseña la hoja «Abrir un enlace» de Kino y lleva a la publicación en x.com (en el TV,
-  un QR para escanearlo con el teléfono), y **Ver más resultados** abre la lista completa, paginada.
+  un QR para escanearlo con el teléfono), y **Ver más resultados** abre la lista completa. La
+  búsqueda pública de X está cerrada para apps que no son la de X (ver «Límites»), así que si el
+  tópico no aparece en tu Inicio o guardados, la pantalla lo dice sin rodeos.
   Sin sesión, la propia pantalla trae el formulario para entrar. Es 18+: solo sale
   con el código desbloqueado, y sus resultados tampoco quedan en tu historial.
 - **Reproductor**: la mejor copia MP4 disponible; en «Ahorro de datos», la más liviana. Si X solo
@@ -75,22 +78,21 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 ## Cómo funciona (y sus límites, dichos sin adornos)
 
 - Con tu sesión, el plugin hace la **misma consulta interna que la web de X** para leer Elementos
-  guardados, el Inicio y la búsqueda. X no publica esas consultas: no son una API estable ni
-  documentada.
+  guardados y el Inicio. X no publica esas consultas: no son una API estable ni documentada.
 - X **cambia el identificador de esas consultas** cada tanto. Si eso pasa, el plugin intenta
   descubrir el nuevo leyendo los archivos JavaScript de la propia web de X (`abs.twimg.com`) y lo
   guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
-  permite pegarlo a mano: para la búsqueda, escribe `search:` seguido del código de la petición
-  «SearchTimeline» (visible en x.com ▸ F12 ▸ Red); para los guardados, `bookmarks:` seguido del
-  código de «Bookmarks».
-- Para buscar, X **exige además un sello anti-bot** (`x-client-transaction-id`): un número que su
-  web calcula en el navegador a partir de la propia página de inicio de X. Sin él la búsqueda da
-  404 — no es el límite de peticiones (eso da 429). Desde la 1.8.0 el plugin genera ese sello
-  igual que la web de X: lee la página de inicio y su archivo `ondemand.s` y lo guarda 12 horas,
-  así que la primera búsqueda tras instalar o actualizar tarda un poco más. Guardados, Inicio y
-  perfiles no piden el sello: por eso esas filas siempre funcionaron y la búsqueda no.
+  permite pegarlo a mano: `bookmarks:` seguido del código de la petición «Bookmarks» (visible en
+  x.com ▸ F12 ▸ Red).
+- **La búsqueda pública de X está cerrada** para clientes que no son su web o su app oficial: exige
+  un sello anti-bot (`x-client-transaction-id`) que su web calcula en el navegador y, aun
+  reproduciendo ese cálculo exactamente (se intentó en la 1.8.0, validado contra implementaciones
+  de referencia abiertas), X siguió rechazando las peticiones que no salen de su navegador. Por eso
+  la pantalla «Buscar en X» no consulta la búsqueda de X: recorre tu Inicio y tus guardados y
+  filtra por las palabras de la consulta. Es lo único que X permite hoy a una app así; si X
+  cambiara de postura, la búsqueda pública podría volver en una versión futura.
 - La URL de cada video se guarda en la caché del plugin (hasta 120 videos) para que reproducir no
-  cueste otra petición. «Limpiar la caché de videos» la vacía (y rehace el sello de la búsqueda).
+  cueste otra petición. «Limpiar la caché de videos» la vacía.
 - Como títulos de Kino solo aparecen los tuits **con video**; los tuits con fotos o solo texto no
   se pueden reproducir. La pantalla «Buscar en X» sí muestra también las fotos publicadas. No se
   pueden descargar (el plugin no declara `download`) y no hay DRM de por medio.

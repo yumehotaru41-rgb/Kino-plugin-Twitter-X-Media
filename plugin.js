@@ -10,16 +10,19 @@
 // convierte en títulos de Kino. La URL de cada video queda en la caché del plugin, así reproducir
 // no cuesta otra petición.
 //
-// Nota honesta: la consulta interna de X no es una API pública. Además de cambiar su
-// identificador de vez en cuando, X exige para buscar una cabecera anti-bot
-// («x-client-transaction-id»): un sello que su web calcula en el navegador. Este plugin lo
-// reproduce — se lee la página de inicio de X y se guarda 12 horas — y si el identificador
-// cambia intenta descubrir el nuevo leyendo los archivos de la propia web de X; el campo
-// «Identificador de la API» de los ajustes permite fijarlo a mano.
+// Nota honesta: la consulta interna de X no es una API pública. X cambia su
+// identificador de vez en cuando (el plugin intenta descubrir el nuevo leyendo
+// los archivos de la propia web de X, y el campo «Identificador de la API» de
+// los ajustes permite fijarlo a mano) y además cierra su API de búsqueda para
+// clientes que no son su web: la rechaza aunque la petición lleve el sello
+// anti-bot que su web calcula. Por eso la búsqueda del plugin recorre lo que
+// SÍ se puede cargar con tu sesión — el Inicio y tus guardados — en vez de la
+// búsqueda pública de X.
 //
 // Además de las filas del Inicio, el plugin trae su propia pantalla «Buscar en X» (capability
-// "screen"): un buscador de tópicos, personas, @usuarios y #etiquetas que consulta a X primero
-// (recientes y populares) y suma después los guardados que coincidan.
+// "screen"): un buscador de tópicos, personas, @usuarios y #etiquetas que recorre el Inicio y
+// los guardados — lo que el plugin puede cargar con tu sesión — y arma un feed con lo que
+// coincida, con videos y fotos.
 
 const X = "https://x.com";
 const SYNDICATION = "https://cdn.syndication.twimg.com";
@@ -34,8 +37,6 @@ const SEED_BOOKMARKS = "fjf5b5Lu82lYMSBRhppK2g";
 // Semilla conocida de la consulta del Inicio (HomeTimeline); si X la rota, discover() trae la buena.
 const SEED_HOME = "c-CzHF1LboFilMpsx4ZCrQ";
 
-// La búsqueda de X (SearchTimeline) no tiene semilla fiable: discover() la encuentra en la web de X.
-const SEED_SEARCH = "vLHjqbDv7TPFMBkIIO1nOA";
 
 const OPS_KEY = "ops:v1";
 const MEDIA_KEY = "media:v1";
@@ -195,8 +196,6 @@ async function xget(url, options) {
   var opts = options || {};
   var headers = jsonHeaders(opts.cookies);
   if (opts.accept) headers.accept = opts.accept;
-  // El sello anti-bot de la búsqueda: SearchTimeline no responde sin él.
-  if (opts.tx) headers["x-client-transaction-id"] = opts.tx;
   var timeoutMs = opts.timeoutMs || 15000;
   var r;
   try {
@@ -311,15 +310,6 @@ function homeId() {
   return SEED_HOME;
 }
 
-function searchId() {
-  // El campo avanzado también puede fijar solo el de búsqueda: «search:XXXX».
-  var override = String(setting("queryId") || "");
-  var manual = /^search[:=]\s*([A-Za-z0-9_-]{10,60})$/i.exec(override);
-  if (manual) return manual[1];
-  var ops = savedOps();
-  if (ops && typeof ops.Search === "string" && ops.Search) return ops.Search;
-  return SEED_SEARCH;
-}
 
 function scanForOperation(body, name) {
   // El nombre de la operación va pegado a su queryId en la tabla de la web de X.
@@ -992,469 +982,6 @@ function rawQueryOf(text) {
 }
 
 // ---------------------------------------------------------------------------
-// El sello anti-bot de la búsqueda: «x-client-transaction-id»
-// ---------------------------------------------------------------------------
-// La búsqueda de X (SearchTimeline) exige esta cabecera: un sello que la web
-// de X calcula en el navegador leyendo su propia página de inicio — una llave
-// en el meta «twitter-site-verification», la animación de carga (cuatro SVG)
-// y un archivo «ondemand.s» — y mezclándolo con el método, la ruta y la hora
-// de cada petición. Sin el sello X responde 404 con el cuerpo vacío: no es el
-// límite de peticiones (eso da 429) ni el identificador de la consulta.
-// Guardados, Inicio y los perfiles no lo piden; por eso esas partes siempre
-// funcionaron y la búsqueda no. El cálculo reproduce el de la web de X
-// (validado contra capturas reales de su página de inicio), se guarda 12
-// horas — la animación no cambia en cada visita — y si X no coopera se
-// espera 90 segundos antes de volver a leerla.
-
-const CT_EPOCH_MS = 1682924400000;
-const CT_CACHE_KEY = "ct:v1";
-const CT_TTL_MS = 12 * 60 * 60 * 1000;
-var ctMem = null;
-var ctLastTryAt = 0;
-
-function ctHexToBytes(hex) {
-  var bytes = [];
-  for (var i = 0; i + 1 < hex.length + 1; i += 2) {
-    bytes.push(parseInt(hex.slice(i, i + 2), 16));
-  }
-  return bytes;
-}
-
-function ctB64ToBytes(b64) {
-  return ctHexToBytes(kino.crypto.convert(String(b64 || ""), "base64", "hex"));
-}
-
-function ctBytesToB64(bytes) {
-  var hex = "";
-  for (var i = 0; i < bytes.length; i++) {
-    hex += bytes[i] < 16 ? "0" + bytes[i].toString(16) : bytes[i].toString(16);
-  }
-  return kino.crypto.convert(hex, "hex", "base64").replace(/=+$/, "");
-}
-
-// La llave de la página de inicio: el meta «twitter-site-verification».
-function ctParseKey(html) {
-  try {
-    var metas = kino.html.select(html, "meta[name=twitter-site-verification]");
-    if (metas && metas.length && metas[0].attrs && metas[0].attrs.content) {
-      return metas[0].attrs.content;
-    }
-  } catch (e) {
-    /* sin select: cae al análisis por patrón */
-  }
-  var tag = /<meta\b[^>]*twitter-site-verification[^>]*>/i.exec(html);
-  if (tag) {
-    var content = /content=["']([^"']+)["']/i.exec(tag[0]);
-    if (content) return content[1];
-  }
-  return null;
-}
-
-// El archivo «ondemand.s» del empaquetador de X, con la forma de su
-// constructor de rutas: el id del paquete y su hash viven en el mismo script.
-var CT_ONDEMAND_RE = /(\d+):\s*["']ondemand\.s["'][\s\S]*?\}\)\[e\]\s*\|\|\s*e\)\s*\+\s*["']\.["']\s*\+\s*\(\{[\s\S]*?\b\1:\s*["']([a-zA-Z0-9_-]+)["']/;
-
-function ctParseOnDemandUrl(html) {
-  var m = CT_ONDEMAND_RE.exec(html);
-  return m ? "https://abs.twimg.com/responsive-web/client-web/ondemand.s." + m[2] + "a.js" : null;
-}
-
-// Los índices de la llave: las expresiones «(t[N], 16)» del ondemand.s. El
-// primero elige la fila de la animación; el resto fija su momento.
-function ctParseIndices(source) {
-  var indices = [];
-  var re = /\(\w\[(\d{1,2})\],\s*16\)/g;
-  var m;
-  while ((m = re.exec(source))) indices.push(Number(m[1]));
-  return indices;
-}
-
-// Las filas de la animación: el byte 5 de la llave elige uno de los cuatro
-// SVG de la animación de carga de X; el segundo «path» trae los números
-// (color inicial, color final, giro y la curva de suavizado).
-function ctParseFrameRows(html, svgIndex) {
-  var frames = [];
-  var re = /<svg\b[^>]*\bid=["'][^"']*loading-x-anim[^"']*["'][^>]*>([\s\S]*?)<\/svg>/gi;
-  var m;
-  while ((m = re.exec(html))) frames.push(m[1]);
-  if (svgIndex >= frames.length) return null;
-  var ds = [];
-  var reD = /\sd=["']([^"']*)["']/g;
-  while ((m = reD.exec(frames[svgIndex]))) ds.push(m[1]);
-  if (ds.length < 2) return null;
-  var rows = [];
-  var segments = ds[1].substring(9).split("C");
-  for (var i = 0; i < segments.length; i++) {
-    var numbers = segments[i].match(/\d+/g) || [];
-    var row = [];
-    for (var n = 0; n < numbers.length; n++) row.push(Number(numbers[n]));
-    rows.push(row);
-  }
-  return rows;
-}
-
-// La curva de suavizado, como la resuelve el navegador (Chromium): once
-// muestras de la curva, cuatro pasos de Newton y bisección fina.
-function ctCubicGetValue(curves, time) {
-  var x1 = curves[0], y1 = curves[1], x2 = curves[2], y2 = curves[3];
-  var EPSILON = 0.0000001;
-  var SAMPLES = 11;
-  var STEP = 1 / (SAMPLES - 1);
-  var cx = 3 * x1;
-  var bx = 3 * (x2 - x1) - cx;
-  var ax = 1 - cx - bx;
-  var cy = 3 * y1;
-  var by = 3 * (y2 - y1) - cy;
-  var ay = 1 - cy - by;
-  var startGradient;
-  if (x1 > 0) startGradient = y1 / x1;
-  else if (y1 === 0 && x2 > 0) startGradient = y2 / x2;
-  else if (y1 === 0 && y2 === 0) startGradient = 1;
-  else startGradient = 0;
-  var endGradient;
-  if (x2 < 1) endGradient = (y2 - 1) / (x2 - 1);
-  else if (y2 === 1 && x1 < 1) endGradient = (y1 - 1) / (x1 - 1);
-  else if (y2 === 1 && y1 === 1) endGradient = 1;
-  else endGradient = 0;
-  function sampleX(t) {
-    return ((ax * t + bx) * t + cx) * t;
-  }
-  function sampleY(t) {
-    return ((ay * t + by) * t + cy) * t;
-  }
-  function sampleDerivativeX(t) {
-    return (3 * ax * t + 2 * bx) * t + cx;
-  }
-  var spline = [];
-  for (var i = 0; i < SAMPLES; i++) spline.push(sampleX(i * STEP));
-  function solveCurveX(x) {
-    var t0 = 0;
-    var t1 = 1;
-    var t2 = x;
-    for (var i = 1; i < SAMPLES; i++) {
-      if (x <= spline[i]) {
-        t1 = STEP * i;
-        t0 = t1 - STEP;
-        t2 = t0 + ((t1 - t0) * (x - spline[i - 1])) / (spline[i] - spline[i - 1]);
-        break;
-      }
-    }
-    var x2 = 0;
-    for (var n = 0; n < 4; n++) {
-      x2 = sampleX(t2) - x;
-      if (Math.abs(x2) < EPSILON) return t2;
-      var d2 = sampleDerivativeX(t2);
-      if (Math.abs(d2) < EPSILON) break;
-      t2 -= x2 / d2;
-    }
-    if (Math.abs(x2) < EPSILON) return t2;
-    while (t0 < t1) {
-      x2 = sampleX(t2);
-      if (Math.abs(x2 - x) < EPSILON) return t2;
-      if (x > x2) t0 = t2;
-      else t1 = t2;
-      t2 = (t1 + t0) * 0.5;
-    }
-    return t2;
-  }
-  if (time < 0) return startGradient * time;
-  if (time > 1) return 1 + endGradient * (time - 1);
-  return sampleY(solveCurveX(time));
-}
-
-// Un byte (0-255) escalado linealmente a [minVal, maxVal].
-function ctSolve(value, minVal, maxVal, floor) {
-  var result = (value * (maxVal - minVal)) / 255 + minVal;
-  return floor ? Math.floor(result) : Math.round(result * 100) / 100;
-}
-
-// Un número como lo imprime el navegador en la matriz de la animación: seis
-// dígitos significativos, notación científica fuera de 1e-4..1e6.
-function ctFormatMatrixValue(value) {
-  if (value === 0) return "0";
-  var sign = value < 0 ? "-" : "";
-  var parts = Math.abs(value).toExponential(5).split("e");
-  var exponent = parseInt(parts[1], 10);
-  var digits = parts[0].replace(".", "").replace(/0+$/, "") || "0";
-  if (exponent < -4 || exponent >= 6) {
-    var head = digits.length > 1 ? digits.charAt(0) + "." + digits.slice(1) : digits;
-    var expSign = exponent < 0 ? "-" : "+";
-    var expDigits = String(Math.abs(exponent));
-    while (expDigits.length < 2) expDigits = "0" + expDigits;
-    return sign + head + "e" + expSign + expDigits;
-  }
-  if (exponent >= 0) {
-    var intPart = digits.slice(0, exponent + 1);
-    while (intPart.length < exponent + 1) intPart += "0";
-    var fracPart = digits.slice(exponent + 1);
-    return fracPart ? sign + intPart + "." + fracPart : sign + intPart;
-  }
-  var zeros = "";
-  for (var i = 0; i < -exponent - 1; i++) zeros += "0";
-  return sign + "0." + zeros + digits;
-}
-
-// Los números que el script de X lee de la matriz impresa del navegador.
-function ctMatrixNumbers(value) {
-  var matches = ctFormatMatrixValue(value).match(/[\d.-]+/g) || [];
-  var out = [];
-  for (var i = 0; i < matches.length; i++) out.push(Number(matches[i]));
-  return out;
-}
-
-// Un número en hexadecimal, dígito a dígito por la fracción, como el script
-// de X lo convierte (sin redondear la fracción).
-function ctFloatToHex(x) {
-  var integer = Math.floor(x);
-  var fraction = x - integer;
-  var result = integer > 0 ? integer.toString(16).toUpperCase() : "";
-  if (fraction === 0) return result;
-  result += ".";
-  var guard = 0;
-  while (fraction > 0 && guard < 32) {
-    fraction *= 16;
-    var digit = Math.floor(fraction);
-    fraction -= digit;
-    result += digit.toString(16).toUpperCase();
-    guard++;
-  }
-  return result;
-}
-
-// La clave de la animación: color interpolado y matriz del giro en un
-// momento elegido por la llave, serializados como el script de X.
-function ctAnimate(frameRow, targetTime) {
-  var fromColor = frameRow.slice(0, 3);
-  var toColor = frameRow.slice(3, 6);
-  var toRotation = ctSolve(frameRow[6], 60, 360, true);
-  var curves = [];
-  for (var c = 7; c < frameRow.length; c++) {
-    curves.push(ctSolve(frameRow[c], (c - 7) % 2 ? -1 : 0, 1, false));
-  }
-  var progress = ctCubicGetValue(curves, targetTime);
-  var out = [];
-  for (var i = 0; i < 3; i++) {
-    var channel = Math.round(
-      Math.max(0, Math.min(255, fromColor[i] * (1 - progress) + toColor[i] * progress))
-    );
-    out.push(channel.toString(16));
-  }
-  var rotation = toRotation * progress;
-  var rad = (rotation * Math.PI) / 180;
-  var matrix = [Math.cos(rad), -Math.sin(rad), Math.sin(rad), Math.cos(rad)];
-  for (i = 0; i < matrix.length; i++) {
-    var numbers = ctMatrixNumbers(matrix[i]);
-    for (var n = 0; n < numbers.length; n++) {
-      var hex = ctFloatToHex(Math.abs(Number(numbers[n].toFixed(2)))).toLowerCase();
-      out.push(hex && hex.charAt(0) === "." ? "0" + hex : hex || "0");
-    }
-  }
-  out.push("0", "0");
-  return out.join("").replace(/[.-]/g, "");
-}
-
-// La clave completa: la fila que elige el primer índice de la llave,
-// evaluada en el momento que marcan los demás índices.
-function ctAnimationKey(keyBytes, rowIndexIdx, keyBytesIndices, frameRows) {
-  var rowIndex = keyBytes[rowIndexIdx] % 16;
-  var frameRow = frameRows[rowIndex];
-  if (!frameRow) return null;
-  var frameTime = 1;
-  for (var i = 0; i < keyBytesIndices.length; i++) {
-    frameTime *= keyBytes[keyBytesIndices[i]] % 16;
-  }
-  return ctAnimate(frameRow, (Math.round(frameTime / 10) * 10) / 4096);
-}
-
-// El sello de una petición: llave + hora + resumen de
-// «método!ruta!hora» + la palabra y la animación de X, enmascarado con un
-// byte al azar y en base64 sin relleno.
-function ctGenerate(keys, method, path, timeNow) {
-  var keyBytes = ctB64ToBytes(keys.k);
-  var digest = ctHexToBytes(
-    kino.crypto.hash("sha256", method + "!" + path + "!" + timeNow + "obfiowerehiring" + keys.a)
-  );
-  var bytes = keyBytes.slice();
-  bytes.push(timeNow & 255, (timeNow >> 8) & 255, (timeNow >> 16) & 255, (timeNow >> 24) & 255);
-  for (var i = 0; i < 16; i++) bytes.push(digest[i]);
-  bytes.push(3);
-  var randomByte = parseInt(kino.crypto.randomBytes(1, "hex"), 16);
-  var out = [randomByte];
-  for (i = 0; i < bytes.length; i++) out.push(bytes[i] ^ randomByte);
-  return ctBytesToB64(out);
-}
-
-function ctCached() {
-  if (ctMem && Date.now() - ctMem.at < CT_TTL_MS) return ctMem;
-  var raw = kino.storage.get(CT_CACHE_KEY);
-  if (!raw) return null;
-  try {
-    var parsed = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed.k === "string" &&
-      typeof parsed.a === "string" &&
-      typeof parsed.at === "number" &&
-      Date.now() - parsed.at < CT_TTL_MS
-    ) {
-      ctMem = parsed;
-      return parsed;
-    }
-  } catch (e) {
-    /* caché rota: se rehace */
-  }
-  return null;
-}
-
-// Lee la página de inicio de X con la sesión y prepara llave y animación.
-// Nunca lanza: si algo falla responde null y la búsqueda sale sin sello.
-async function ctBootstrap(timeoutMs) {
-  var cached = ctCached();
-  if (cached) return cached;
-  if (Date.now() - ctLastTryAt < 90000) return null;
-  ctLastTryAt = Date.now();
-  try {
-    var r = await xget(X + "/home", {
-      accept: "text/html,application/xhtml+xml",
-      maxBytes: 900000,
-      timeoutMs: Math.min(timeoutMs || 12000, 15000)
-    });
-    if (!r.ok) return null;
-    var html = r.text();
-    var key = ctParseKey(html);
-    if (!key) return null;
-    var keyBytes = ctB64ToBytes(key);
-    if (keyBytes.length < 32) return null;
-    var onDemandUrl = ctParseOnDemandUrl(html);
-    if (!onDemandUrl) return null;
-    var rows = ctParseFrameRows(html, keyBytes[5] % 4);
-    if (!rows) return null;
-    var chunk = await xget(onDemandUrl, { accept: "*/*", maxBytes: 300000, timeoutMs: 12000 });
-    if (!chunk.ok) return null;
-    var indices = ctParseIndices(chunk.text());
-    if (!indices.length) return null;
-    var animation = ctAnimationKey(keyBytes, indices[0], indices.slice(1), rows);
-    if (!animation) return null;
-    ctMem = { k: key, a: animation, at: Date.now() };
-    try {
-      kino.storage.set(CT_CACHE_KEY, JSON.stringify(ctMem), { ttlMs: CT_TTL_MS });
-    } catch (e) {
-      /* sin caché: la memoria del proceso alcanza */
-    }
-    return ctMem;
-  } catch (e) {
-    kino.log("ct bootstrap:", e && e.message);
-    return null;
-  }
-}
-
-// El sello para una petición concreta, o null si no se pudo preparar.
-async function ctFor(method, path, timeoutMs) {
-  var keys = await ctBootstrap(timeoutMs);
-  if (!keys) return null;
-  try {
-    return ctGenerate(keys, method, path, Math.floor((Date.now() - CT_EPOCH_MS) / 1000));
-  } catch (e) {
-    kino.log("ct generate:", e && e.message);
-    return null;
-  }
-}
-
-async function searchFetch(cursor, rawQuery, product, timeoutMs) {
-  var id = searchId();
-  var variables = {
-    rawQuery: rawQuery,
-    count: 20,
-    querySource: "typed_query",
-    product: product || "Latest"
-  };
-  if (cursor) variables.cursor = cursor;
-  var query =
-    "?variables=" +
-    encodeURIComponent(JSON.stringify(variables)) +
-    "&features=" +
-    encodeURIComponent(JSON.stringify(SEARCH_FEATURES)) +
-    "&fieldToggles=" +
-    encodeURIComponent(JSON.stringify({ withArticleRichContentState: false }));
-  var path = "/i/api/graphql/" + id + "/SearchTimeline" + query;
-  // El sello anti-bot: X lo exige para buscar. Si no se puede preparar ahora,
-  // la petición sale sin él y el error lo explica.
-  var tx = await ctFor("GET", path, timeoutMs);
-  var r = await xget(X + path, { timeoutMs: timeoutMs || 14000, tx: tx });
-  if (r.status === 400 || r.status === 404 || r.status === 422) {
-    var next = await discover();
-    if (next.Search && next.Search !== id) {
-      id = next.Search;
-      path = "/i/api/graphql/" + id + "/SearchTimeline" + query;
-      tx = await ctFor("GET", path, timeoutMs);
-      r = await xget(X + path, { timeoutMs: timeoutMs || 14000, tx: tx });
-    }
-  }
-  if (!r.ok) {
-    // 400/404/422: X rechazó la búsqueda. Casi siempre es el sello anti-bot
-    // (todavía sin preparar o recién renovado); lo del identificador rotado
-    // ya casi no pasa y discover() lo cubre igual.
-    if (r.status === 400 || r.status === 404 || r.status === 422) {
-      throw kino.error("unavailable", "search " + r.status + (tx ? " con sello" : " sin sello"), {
-        userMessage:
-          "X rechazó la búsqueda (código " +
-          r.status +
-          "). El plugin ya genera el sello anti-bot que X pide para buscar; " +
-          "si acabas de actualizar, espera un par de minutos y reintenta. Si sigue igual, " +
-          "toca «Limpiar la caché de videos» en Ajustes ▸ Twitter/X Media para rehacerlo desde cero."
-      });
-    }
-    throw kino.error("unavailable", "search " + r.status, {
-      userMessage: "X no respondió a la búsqueda (código " + r.status + "). Inténtalo más tarde."
-    });
-  }
-  var json;
-  try {
-    json = r.json();
-  } catch (e) {
-    throw kino.error("unavailable", "search json", {
-      userMessage: "La búsqueda de X devolvió algo que no se entiende. Inténtalo más tarde."
-    });
-  }
-  return json;
-}
-
-async function searchRaw(cursor, rawQuery, product, timeoutMs) {
-  return parsePage(await searchFetch(cursor, rawQuery, product, timeoutMs));
-}
-
-async function xSearch(rawQuery, product, rounds, options) {
-  var opts = options || {};
-  var deadline = opts.budgetMs ? Date.now() + opts.budgetMs : 0;
-  var items = [];
-  var seen = {};
-  var cursor = null;
-  var maxRounds = rounds || 5;
-  for (var round = 0; round < maxRounds; round++) {
-    if (deadline && Date.now() > deadline - 2500) break;
-    var timeout = opts.timeoutMs || 14000;
-    if (deadline) timeout = Math.min(timeout, Math.max(2500, deadline - Date.now()));
-    var page;
-    try {
-      page = await searchRaw(cursor, rawQuery, product, timeout);
-    } catch (e) {
-      if (round === 0) throw e;
-      break;
-    }
-    for (var i = 0; i < page.items.length; i++) {
-      var item = page.items[i];
-      if (!seen[item.id]) {
-        seen[item.id] = true;
-        items.push(item);
-      }
-    }
-    if (items.length >= 100 || !page.next) break;
-    cursor = page.next;
-  }
-  return items.slice(0, 100);
-}
-
-// ---------------------------------------------------------------------------
 // Palabras y filtros: lo común de la búsqueda de guardados y de la pantalla
 // ---------------------------------------------------------------------------
 
@@ -1510,75 +1037,101 @@ async function filterList(text, run, count, budgetMs) {
   return found;
 }
 
-// Une dos listas de títulos quitando repetidos.
-function mergeItems(first, second, cap) {
-  var out = first.slice();
-  var ids = {};
-  for (var i = 0; i < first.length; i++) ids[first[i].id] = true;
-  for (var j = 0; j < second.length; j++) {
-    if (!ids[second[j].id]) {
-      ids[second[j].id] = true;
-      out.push(second[j]);
-    }
-    if (out.length >= cap) break;
-  }
-  return out.slice(0, cap);
-}
+// La búsqueda de la pantalla y de search(): recorre lo que el plugin SÍ puede
+// cargar de X — el Inicio y los guardados, que no piden sello anti-bot — y se
+// queda con los videos y fotos cuyas palabras coinciden con la consulta. La
+// API pública de búsqueda de X (SearchTimeline) sigue cerrada para clientes
+// que no son la web de X: la rechaza aunque la petición lleve el sello que su
+// web calcula, así que el plugin dejó de intentarlo.
+async function loadedSearch(text, budgetMs) {
+  var wanted = wordsOf(stripOperators(text));
+  var items = [];
+  var photos = [];
+  var seenItems = {};
+  var seenPhotos = {};
+  var started = Date.now();
 
-// La misma búsqueda que hace search() para palabras y #etiquetas, con un
-// presupuesto repartido: primero X (recientes y populares), después los
-// guardados que coincidan. La usan search() y la pantalla propia.
-async function searchEverywhere(text, budgetMs) {
-  var raw = rawQueryOf(text);
-  var fromX = [];
-  var xError = null;
-  var maxRounds = 3;
-  if (budgetMs < 12000) maxRounds = 2;
-  try {
-    var latest = await xSearch(raw, "Latest", maxRounds, {
-      timeoutMs: 11000,
-      budgetMs: Math.round(budgetMs * 0.45)
-    });
-    var popular = await xSearch(raw, "Top", 2, {
-      timeoutMs: 11000,
-      budgetMs: Math.round(budgetMs * 0.35)
-    });
-    fromX = mergeItems(latest, popular, 100);
-  } catch (e) {
-    xError = e;
-    kino.log("search x:", e && e.code);
-  }
-  var found = fromX;
-  if (found.length < 60) {
+  // Una página de cualquier lista: suma los videos y las fotos que coincidan.
+  function take(json) {
+    var page = { items: [], next: "" };
     try {
-      var saved = await filterList(text, bookmarksPage, 40, Math.round(budgetMs * 0.2));
-      found = mergeItems(found, saved, 100);
+      page = parsePage(json);
     } catch (e) {
-      // Si los guardados fallan, no se pierde lo que X ya trajo.
+      /* página inservible: se sigue con la siguiente */
+    }
+    for (var i = 0; i < page.items.length; i++) {
+      var item = page.items[i];
+      if (!seenItems[item.id] && matchesWords(item, wanted)) {
+        seenItems[item.id] = true;
+        items.push(item);
+      }
+    }
+    var pics = [];
+    try {
+      pics = photoPostsOf(json, 40);
+    } catch (e) {
+      /* sin fotos en esta página */
+    }
+    for (var p = 0; p < pics.length; p++) {
+      var pic = pics[p];
+      if (seenPhotos[pic.id]) continue;
+      var hay = ((pic.title || "") + " " + (pic.text || "") + " " + (pic.by || "")).toLowerCase();
+      var ok = true;
+      for (var w = 0; w < wanted.length; w++) {
+        if (hay.indexOf(wanted[w]) < 0) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        seenPhotos[pic.id] = true;
+        photos.push(pic);
+      }
+    }
+    return page.next || "";
+  }
+
+  // El Inicio («Para ti»): hasta cuatro páginas, dentro del presupuesto.
+  var homeNext = null;
+  for (var round = 0; round < 4; round++) {
+    var remaining = budgetMs - (Date.now() - started);
+    if (remaining < 2500) break;
+    var json;
+    try {
+      json = await timelineRaw(homeNext, { count: 40, timeoutMs: Math.min(9000, remaining) });
+    } catch (e) {
+      kino.log("home scan:", e && e.code);
+      break;
+    }
+    homeNext = take(json);
+    if (!homeNext || items.length >= 80) break;
+  }
+
+  // Los guardados: hasta tres páginas con lo que quede de presupuesto.
+  var savedNext = null;
+  for (var round2 = 0; round2 < 3; round2++) {
+    var remaining2 = budgetMs - (Date.now() - started);
+    if (remaining2 < 2500) break;
+    var json2;
+    try {
+      json2 = await bookmarksRaw(savedNext, { count: 40, timeoutMs: Math.min(9000, remaining2) });
+    } catch (e) {
       kino.log("saved scan:", e && e.code);
+      break;
     }
+    savedNext = take(json2);
+    if (!savedNext || items.length >= 80) break;
   }
-  if (!found.length && xError) throw xError;
-  return found;
+
+  return { items: items, photos: photos };
 }
 
-// Fotos públicas de X para un tópico: la misma búsqueda con «filter:images»,
-// una sola petición (recientes) para no pedirle demasiado a X. Si falla, la
-// pantalla muestra los videos igual: las fotos son un extra, nunca un error.
-async function photoSearch(text) {
-  var raw = text;
-  if (!hasOperators(raw)) {
-    if (raw.charAt(0) === "@") {
-      raw = "from:" + raw.slice(1).replace(/[^A-Za-z0-9_]/g, "") + " filter:images";
-    } else {
-      raw = raw + " filter:images";
-    }
-  }
-  var json = await searchFetch(null, raw, "Latest", 9000);
-  return photoPostsOf(json, 20).slice(0, 15);
+// Para search() de Kino: solo los videos (los títulos que Kino pagina).
+async function searchEverywhere(text, budgetMs) {
+  var found = await loadedSearch(text, budgetMs);
+  return found.items;
 }
 
-// ---------------------------------------------------------------------------
 // @persona: todos los videos del perfil, por la pestaña Multimedia de X
 // ---------------------------------------------------------------------------
 
@@ -1766,88 +1319,18 @@ export async function browse(ref, cursor) {
       /* queda tal cual si no estaba codificado */
     }
 
-    // Cursor propio: «<recientes>|<populares>». Una parte vacía: ese caudal
-    // ya se agotó (o falló) y no se vuelve a pedir.
-    var cursorLatest = "";
-    var cursorTop = "";
-    if (cursor) {
-      var halves = String(cursor).split("|");
-      cursorLatest = halves[0] || "";
-      cursorTop = halves[1] || "";
+    // La búsqueda pública de X sigue cerrada para clientes que no son su
+    // web: la lista se llena con lo que el plugin SÍ puede cargar — el
+    // Inicio y los guardados — filtrado por la consulta, en una sola tanda.
+    var plain = stripOperators(raw);
+    var found = { items: [] };
+    try {
+      found = await loadedSearch(plain || raw, 20000);
+    } catch (e) {
+      kino.log("browse x:", e && e.code);
+      if (!cursor) throw e;
     }
-    var wantLatest = !cursor || !!cursorLatest;
-    var wantTop = !cursor || !!cursorTop;
-
-    // Los dos caudales en paralelo: más resultados y a la mitad de tiempo.
-    var pLatest = wantLatest
-      ? searchRaw(cursorLatest || null, raw, "Latest", 10000).catch(function (e) {
-          return { __error: e };
-        })
-      : null;
-    var pTop = wantTop
-      ? searchRaw(cursorTop || null, raw, "Top", 10000).catch(function (e) {
-          return { __error: e };
-        })
-      : null;
-
-    var items = [];
-    var seen = {};
-    var add = function (list) {
-      for (var i = 0; i < list.length; i++) {
-        var item = list[i];
-        if (item && !seen[item.id]) {
-          seen[item.id] = true;
-          items.push(item);
-        }
-      }
-    };
-
-    var xError = null;
-    var nextLatest = "";
-    var nextTop = "";
-
-    if (pLatest) {
-      var latestPage = await pLatest;
-      if (latestPage && latestPage.__error) {
-        xError = latestPage.__error;
-        kino.log("browse x latest:", xError && xError.code);
-      } else if (latestPage) {
-        add(latestPage.items);
-        nextLatest = latestPage.next || "";
-      }
-    }
-    if (pTop) {
-      var topPage = await pTop;
-      if (topPage && topPage.__error) {
-        xError = topPage.__error;
-        kino.log("browse x top:", xError && xError.code);
-      } else if (topPage) {
-        add(topPage.items);
-        nextTop = topPage.next || "";
-      }
-    }
-
-    // Primera página: los guardados que coinciden también entran, con las
-    // palabras del texto sin operadores (filter:, from:…).
-    if (!cursor && items.length < 40) {
-      var plain = stripOperators(raw);
-      if (plain) {
-        try {
-          var saved = await filterList(plain, bookmarksPage, 40, 5000);
-          add(saved);
-        } catch (e) {
-          // Si los guardados fallan, no se pierde lo que X ya trajo.
-          kino.log("browse x saved:", e && e.code);
-        }
-      }
-    }
-
-    if (!items.length && xError && !cursor) throw xError;
-    if (items.length > 100) items = items.slice(0, 100);
-
-    var xAnswer = { items: items };
-    if (nextLatest || nextTop) xAnswer.next = nextLatest + "|" + nextTop;
-    return xAnswer;
+    return { items: found.items.slice(0, 100) };
   }
   var isHome = ref === "tl" || ref === "inicio";
   if (!isHome && ref !== "bm" && ref !== "guardados") {
@@ -1881,11 +1364,8 @@ export async function search(query) {
     return null;
   }
 
-  // Los operadores de X (from:, min_faves:, lang:…) se pasan tal cual.
-  if (hasOperators(text)) return xSearch(text, null, 4, { timeoutMs: 12000 });
-
-  // @persona: todos los videos del perfil (pestaña Multimedia), no solo los
-  // que suelten las búsquedas.
+  // @persona: primero los videos del perfil (pestaña Multimedia), que no
+  // piden sello anti-bot; si esa vía falla, la búsqueda local de siempre.
   if (text.charAt(0) === "@") {
     var handle = text.slice(1).replace(/[^A-Za-z0-9_]/g, "");
     if (handle) {
@@ -1896,13 +1376,12 @@ export async function search(query) {
         kino.log("usermedia:", e && e.code);
       }
     }
-    return xSearch(rawQueryOf(text), null, 4, { timeoutMs: 12000 });
   }
 
-  // #etiqueta y palabras sueltas («Hinata Hyuga»): PRIMERO X —recientes y
-  // populares, varias páginas— y después los guardados que coincidan. Así
-  // aparecen todos los videos relacionados, no solo el guardado propio.
-  return searchEverywhere(text, 13000);
+  // Operadores, #etiquetas y palabras sueltas: la búsqueda local (Inicio y
+  // guardados filtrados por las palabras). La API pública de búsqueda de X
+  // sigue cerrada para clientes que no son su web.
+  return searchEverywhere(stripOperators(text) || text, 13000);
 }
 
 export async function resolve(ref) {
@@ -2093,17 +1572,11 @@ export async function action(key) {
     kino.cookies.clear();
     kino.storage.remove(ACCOUNT_KEY);
     kino.storage.remove(MEDIA_KEY);
-    kino.storage.remove(CT_CACHE_KEY);
-    ctMem = null;
     return { message: "Sesión de X cerrada en este plugin.", clearSettings: ["cookies"] };
   }
 
   if (key === "limpiar") {
     kino.storage.remove(MEDIA_KEY);
-    // También se rehace el sello anti-bot de la búsqueda desde cero.
-    kino.storage.remove(CT_CACHE_KEY);
-    ctMem = null;
-    ctLastTryAt = 0;
     return { message: "Caché de videos vaciada: se vuelve a leer de X." };
   }
 
@@ -2366,8 +1839,8 @@ export async function screen(arg) {
       icon: "search",
       title: "Sin videos para «" + results.q + "»",
       titleEn: 'No videos for "' + results.q + '"',
-      text: "Ningún video público de X coincide. Prueba otras palabras o quita algún término.",
-      textEn: "No public X video matches. Try other words or fewer terms."
+      text: "La búsqueda recorre tu Inicio y tus guardados de X, y nada coincidió ahí. Prueba otras palabras, o publica/sigue el tema y espera a que aparezca en tu Inicio.",
+      textEn: "Search goes through your X Home and bookmarks, and nothing matched there. Try other words, or post and follow the topic until it shows up in your Home."
     });
   } else if (results) {
     // El feed: una tarjeta por publicación, con su imagen, al estilo de la
@@ -2408,10 +1881,10 @@ export async function screen(arg) {
     children.push({
       type: "emptyState",
       icon: "movie",
-      title: "Busca cualquier video de X",
-      titleEn: "Search any X video",
-      text: "Escribe un tópico o una persona («Hinata Hyuga») y verás todos los videos públicos relacionados, no solo tus guardados. También @usuario y #etiqueta.",
-      textEn: "Type a topic or a person to see every related public video, not just your bookmarks. Also @user and #hashtag."
+      title: "Busca en tu Inicio y tus guardados",
+      titleEn: "Search your Home and bookmarks",
+      text: "Escribe un tópico, una persona, @usuario o #etiqueta: la búsqueda recorre los videos y fotos de tu Inicio y tus guardados de X y arma un feed con lo que coincida.",
+      textEn: "Type a topic, a person, @user or #hashtag: search goes through the videos and photos of your X Home and bookmarks and builds a feed with the matches."
     });
   }
 
@@ -2493,29 +1966,21 @@ export async function screenEvent(event) {
     return { toast: { text: "Falta la sesión de X: inicia sesión en Ajustes", textEn: "No X session: sign in first" } };
   }
 
-  // El sello anti-bot de la búsqueda se prepara ANTES de lanzar las
-  // peticiones: la primera vez cuesta dos lecturas extra (la página de
-  // inicio de X y su archivo ondemand.s) y luego queda guardado 12 horas.
-  await ctBootstrap(12000);
-
   var results;
   var searchError = null;
-  // Las fotos se buscan EN PARALELO con los videos (una sola petición con
-  // «filter:images»): piden lo mismo pero no quitan tiempo. Si fallan, el
-  // feed simplemente queda con los videos; si fallan los videos, las fotos
-  // que haya se muestran igual.
-  var photosPromise = photoSearch(q).catch(function (e) {
-    kino.log("photo search:", e && e.code);
-    return [];
-  });
-  var items = [];
+  // La búsqueda recorre lo que el plugin SÍ puede cargar de X — el Inicio y
+  // los guardados — y se queda con los videos y fotos que coincidan con las
+  // palabras. La API pública de búsqueda de X sigue cerrada para clientes
+  // que no son su web; el plugin ya no la usa.
+  var found = { items: [], photos: [] };
   try {
-    items = await searchEverywhere(q, 25000);
+    found = await loadedSearch(q, 25000);
   } catch (e) {
     searchError = e;
     kino.log("screen search:", e && e.code);
   }
-  var photos = await photosPromise;
+  var items = found.items;
+  var photos = found.photos;
 
   // Un tuit con video ya está como video: su foto no se repite en el feed.
   var videoTweets = {};

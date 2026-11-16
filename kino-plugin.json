@@ -1,11 +1,11 @@
 {
   "id": "twitter-x-media",
   "name": "Twitter/X Media",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
-  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve en Kino los videos de tus Elementos guardados y de tu Inicio. Su pantalla «Buscar en X» abre con el feed de lo último de ambos y su buscador filtra ese catálogo: videos y fotos estilo X, y cada video se reproduce con una URL fresca de X.",
+  "description": "Inicia sesión con tu cuenta de X (Twitter) y ve en Kino los videos de tus guardados, tu Inicio y tus Me gusta. Su pantalla «Buscar en X» abre con el feed de lo último de esas listas y su buscador filtra ese catálogo: videos y fotos estilo X, y cada video se reproduce con una URL fresca de X.",
   "color": "#1D9BF0",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
@@ -146,8 +146,8 @@
       "label": "Identificador de la API (avanzado)",
       "labelEn": "API identifier (advanced)",
       "type": "text",
-      "hint": "Déjalo vacío. Si los guardados dan 404: pega bookmarks:código de Bookmarks",
-      "hintEn": "Leave it empty. If bookmarks give a 404: paste bookmarks:Bookmarks code"
+      "hint": "Vacío está bien. Si algo da 404: pega bookmarks:código o likes:código",
+      "hintEn": "Leave it empty. If something 404s: paste bookmarks:code or likes:code"
     },
     {
       "key": "segundoplano",

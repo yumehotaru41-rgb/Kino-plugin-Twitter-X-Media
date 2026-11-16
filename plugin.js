@@ -21,11 +21,11 @@
 // búsqueda pública de X.
 //
 // Además de las filas del Inicio, el plugin trae su propia pantalla «Buscar en X» (capability
-// "screen"): al abrirse muestra el feed con lo último que cargó del Inicio y de los guardados
-// (catálogo en kino.storage, capability "storageLarge"), y el buscador de tópicos, personas,
-// @usuarios y #etiquetas filtra ese material y suma lo que cargue de X en el momento. El job de
-// segundo plano (capability "schedule", manifest jobs) refresca el Inicio y los guardados para
-// que el catálogo no envejezca.
+// "screen"): al abrirse muestra el feed con lo último que cargó del Inicio, de los guardados y de
+// los Me gusta (catálogo en kino.storage, capability "storageLarge"), y el buscador de tópicos,
+// personas, @usuarios y #etiquetas filtra ese material y suma lo que cargue de X en el momento. El
+// job de segundo plano (capability "schedule", manifest jobs) refresca esas tres listas para que
+// el catálogo no envejezca.
 
 const X = "https://x.com";
 const SYNDICATION = "https://cdn.syndication.twimg.com";
@@ -300,11 +300,16 @@ function savedOps() {
 
 function queryId() {
   var override = setting("queryId");
-  // Formas: «XXXX» (solo guardados, como siempre) o «bookmarks:XXXX».
-  var manual = /^bookmarks[:=]\s*([A-Za-z0-9_-]{10,60})$/i.exec(String(override || ""));
-  if (manual) return { Bookmarks: manual[1] };
+  // Formas: «XXXX» (solo guardados, como siempre), «bookmarks:XXXX» o «likes:XXXX».
+  var manual = /^(bookmarks|likes)[:=]\s*([A-Za-z0-9_-]{10,60})$/i.exec(String(override || ""));
+  if (manual) {
+    var out = {};
+    out[manual[1].toLowerCase() === "likes" ? "Likes" : "Bookmarks"] = manual[2];
+    return out;
+  }
   if (/^[A-Za-z0-9_-]{10,60}$/.test(override)) return { Bookmarks: override };
-  return savedOps() || { Bookmarks: SEED_BOOKMARKS };
+  var ops = savedOps() || {};
+  return { Bookmarks: ops.Bookmarks || SEED_BOOKMARKS, Likes: ops.Likes || "" };
 }
 
 function homeId() {
@@ -316,17 +321,35 @@ function homeId() {
 
 function scanForOperation(body, name) {
   // El nombre de la operación va pegado a su queryId en la tabla de la web de X.
-  var markers = ['operationName:"' + name + '"', 'operationName": "' + name + '"'];
+  // Puede ir en cualquier orden dentro del objeto, así que se elige el queryId
+  // más cercano al nombre y no el primero de la ventana.
+  var markers = [
+    'operationName:"' + name + '"',
+    'operationName": "' + name + '"',
+    '"operationName":"' + name + '"',
+    '"operationName": "' + name + '"'
+  ];
+  var re = /queryId"\s*:\s*"([A-Za-z0-9_-]{10,60})"/g;
+  var best = "";
+  var bestDist = 1e9;
   for (var i = 0; i < markers.length; i++) {
     var at = body.indexOf(markers[i]);
     while (at >= 0) {
-      var around = body.slice(Math.max(0, at - 320), at + 360);
-      var match = /queryId"\s*:\s*"([A-Za-z0-9_-]{10,60})"/.exec(around);
-      if (match) return match[1];
+      var from = Math.max(0, at - 320);
+      var around = body.slice(from, at + 360);
+      re.lastIndex = 0;
+      var m;
+      while ((m = re.exec(around)) !== null) {
+        var dist = Math.abs(from + m.index - at);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = m[1];
+        }
+      }
       at = body.indexOf(markers[i], at + 1);
     }
   }
-  return "";
+  return best;
 }
 
 // X no publica su identificador de consulta: se lee de los archivos de su propia web. Es de mejor
@@ -337,7 +360,7 @@ async function discover() {
   // Enfriamiento: una búsqueda con el identificador viejo puede fallar en
   // varias peticiones seguidas; releer la web de X en cada una no ayuda.
   if (lastDiscover.found && Date.now() - lastDiscover.at < 90000) return lastDiscover.found;
-  var found = { Bookmarks: "", HomeTimeline: "", Search: "" };
+  var found = { Bookmarks: "", HomeTimeline: "", Search: "", Likes: "" };
   var started = Date.now();
   var html = "";
   try {
@@ -358,6 +381,8 @@ async function discover() {
     if (idH) found.HomeTimeline = idH;
     var idS = scanForOperation(text, "SearchTimeline");
     if (idS) found.Search = idS;
+    var idL = scanForOperation(text, "Likes");
+    if (idL) found.Likes = idL;
   }
 
   // 1) Los .js que la propia página enlaza (main y los demás).
@@ -399,9 +424,10 @@ async function discover() {
     "shared~bundle.BookmarkFolders~bundle.Bookmarks",
     "shared~bundle.Compose~bundle.HomeTimeline~bundle.LoggedInMain",
     "bundle.HomeTimeline",
-    "bundle.SearchTimeline"
+    "bundle.SearchTimeline",
+    "bundle.ProfileLikes"
   ];
-  if (!found.Bookmarks || !found.HomeTimeline || !found.Search) {
+  if (!found.Bookmarks || !found.HomeTimeline || !found.Search || !found.Likes) {
     for (var n = 0; n < lazy.length && Date.now() - started < 24000; n++) {
       var escaped = lazy[n].replace(/[.~]/g, "\\$&");
       for (var b = 0; b < bodies.length; b++) {
@@ -435,7 +461,8 @@ async function discover() {
       if (found.Bookmarks) prev.Bookmarks = found.Bookmarks;
       if (found.HomeTimeline) prev.HomeTimeline = found.HomeTimeline;
       if (found.Search) prev.Search = found.Search;
-      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: prev.Bookmarks, HomeTimeline: prev.HomeTimeline, Search: prev.Search, at: Date.now() }), {
+      if (found.Likes) prev.Likes = found.Likes;
+      kino.storage.set(OPS_KEY, JSON.stringify({ Bookmarks: prev.Bookmarks, HomeTimeline: prev.HomeTimeline, Search: prev.Search, Likes: prev.Likes, at: Date.now() }), {
         ttlMs: 7 * 24 * 60 * 60 * 1000
       });
     } catch (e) {
@@ -1092,6 +1119,111 @@ async function timelinePage(cursor, options) {
 }
 
 // ---------------------------------------------------------------------------
+// Los Me gusta de la cuenta (pestaña «Me gusta» del perfil): la misma consulta
+// «Likes» que la web usa en x.com/<usuario>/likes. Su identificador no tiene
+// semilla conocida: lo descubre el plugin en los archivos de la web de X y, si
+// no aparece, se puede pegar a mano con «likes:código» en Identificador de la
+// API. Si no se consigue, la fila simplemente no sale; nada más se rompe.
+// ---------------------------------------------------------------------------
+
+const LIKES_USER_KEY = "likesuser:v1";
+
+// El id numérico de la cuenta, con caché de una semana (una petición menos).
+async function likesUserId() {
+  var handle = cachedAccount();
+  var raw = kino.storage.get(LIKES_USER_KEY);
+  if (raw) {
+    try {
+      var saved = JSON.parse(raw);
+      if (saved && saved.id && saved.handle === handle) return saved.id;
+    } catch (e) {
+      /* se vuelve a consultar */
+    }
+  }
+  if (!handle) {
+    try {
+      handle = await whoAmI(null, 8000);
+    } catch (e) {
+      kino.log("likes whoami:", e && e.code);
+      return "";
+    }
+  }
+  if (!handle) return "";
+  var uid = await userIdOf(handle);
+  try {
+    kino.storage.set(LIKES_USER_KEY, JSON.stringify({ handle: handle, id: uid }), {
+      ttlMs: 7 * 24 * 60 * 60 * 1000
+    });
+  } catch (e2) {
+    /* sin caché igual funciona */
+  }
+  return uid;
+}
+
+async function likesRaw(cursor, options) {
+  var opts = options || {};
+  var uid = await likesUserId();
+  if (!uid) {
+    throw kino.error("unavailable", "likes sin usuario", {
+      userMessage: "No se pudo confirmar tu cuenta para leer tus Me gusta."
+    });
+  }
+  var id = queryId().Likes;
+  if (!id) {
+    var d0 = await discover();
+    id = d0.Likes || "";
+  }
+  if (!id) {
+    throw kino.error("unavailable", "likes sin id", {
+      userMessage:
+        "X no publicó el identificador de «Me gusta» en esta sesión. En tu computador abre " +
+        "x.com con tu cuenta, entra a tu perfil ▸ Me gusta, y con F12 ▸ Red copia el identificador " +
+        "de la petición «Likes» (/i/api/graphql/…/Likes); pégalo en Ajustes ▸ Twitter/X Media ▸ " +
+        "Identificador de la API así: likes:código"
+    });
+  }
+  var variables = { userId: uid, count: opts.count || 20, includePromotedContent: false };
+  if (cursor) variables.cursor = cursor;
+  var query =
+    "?variables=" +
+    encodeURIComponent(JSON.stringify(variables)) +
+    "&features=" +
+    encodeURIComponent(JSON.stringify(FEATURES));
+
+  var r = await xget(X + "/i/api/graphql/" + id + "/Likes" + query, {
+    timeoutMs: opts.timeoutMs || 14000
+  });
+
+  // Identificador viejo: se descubre el nuevo y se repite una vez.
+  if (r.status === 400 || r.status === 404 || r.status === 422) {
+    var next = await discover();
+    if (next.Likes && next.Likes !== id) {
+      id = next.Likes;
+      r = await xget(X + "/i/api/graphql/" + id + "/Likes" + query, {
+        timeoutMs: opts.timeoutMs || 14000
+      });
+    }
+  }
+
+  if (!r.ok) {
+    throw kino.error("unavailable", "likes " + r.status, {
+      userMessage: "X no dio tus Me gusta ahora (código " + r.status + ")."
+    });
+  }
+  try {
+    return r.json();
+  } catch (e) {
+    throw kino.error("unavailable", "likes json", {
+      userMessage: "Tus Me gusta devolvieron algo que no se entiende. Inténtalo más tarde."
+    });
+  }
+}
+
+async function likesPage(cursor, options) {
+  return parsePage(await likesRaw(cursor, options));
+}
+
+// ---------------------------------------------------------------------------
 // Búsqueda en X: @usuario y #etiqueta traen videos directamente de X
 // ---------------------------------------------------------------------------
 
@@ -1287,6 +1419,22 @@ async function loadedSearch(text, budgetMs) {
     if (!savedNext || items.length >= 80) break;
   }
 
+  // Los Me gusta: hasta dos páginas con lo que quede de presupuesto.
+  var likesNext = null;
+  for (var round3 = 0; round3 < 2; round3++) {
+    var remaining3 = budgetMs - (Date.now() - started);
+    if (remaining3 < 2500) break;
+    var json3;
+    try {
+      json3 = await likesRaw(likesNext, { count: 40, timeoutMs: Math.min(9000, remaining3) });
+    } catch (e3) {
+      kino.log("likes scan:", e3 && e3.code);
+      break;
+    }
+    likesNext = take(json3);
+    if (!likesNext || items.length >= 80) break;
+  }
+
   return { items: items, photos: photos };
 }
 
@@ -1428,6 +1576,23 @@ export async function home() {
     }
   }
 
+  // Los Me gusta son otro extra: si X los rechaza o falta el identificador,
+  // no se pierden los guardados ni el Inicio.
+  try {
+    var lk = await likesPage(null, { count: 20, timeoutMs: 10000 });
+    if (lk.items.length) {
+      rows.push({
+        id: "megusta",
+        title: "Twitter/X Media · Tus Me gusta",
+        ref: "likes",
+        genre: "entretenimiento",
+        items: lk.items
+      });
+    }
+  } catch (e) {
+    kino.log("me gusta:", e && e.code);
+  }
+
   // Las filas del Inicio son un extra: si X las rechaza, no se pierden los guardados.
   var tl = null;
   try {
@@ -1497,12 +1662,15 @@ export async function browse(ref, cursor) {
     return { items: found.items.slice(0, 100) };
   }
   var isHome = ref === "tl" || ref === "inicio";
-  if (!isHome && ref !== "bm" && ref !== "guardados") {
+  var isLikes = ref === "likes" || ref === "megusta";
+  if (!isHome && !isLikes && ref !== "bm" && ref !== "guardados") {
     throw kino.error("not_found", "ref " + String(ref).slice(0, 40));
   }
   var page = isHome
     ? await timelinePage(cursor || null, { count: 20, timeoutMs: 14000 })
-    : await bookmarksPage(cursor || null, { count: 40, timeoutMs: 14000 });
+    : isLikes
+      ? await likesPage(cursor || null, { count: 20, timeoutMs: 14000 })
+      : await bookmarksPage(cursor || null, { count: 40, timeoutMs: 14000 });
   var answer = { items: page.items };
   if (page.next) answer.next = page.next;
   return answer;
@@ -1807,6 +1975,14 @@ export async function job(ctx) {
   } catch (e) {
     kino.log("job guardados:", e && e.code);
   }
+  try {
+    var liked = await likesRaw(null, { count: 40, timeoutMs: 9000 });
+    var likedPage = parsePage(liked);
+    videos = videos.concat(likedPage.items);
+    photos = photos.concat(photoPostsOf(liked, 40));
+  } catch (e2) {
+    kino.log("job me gusta:", e2 && e2.code);
+  }
   if (videos.length || photos.length) catalogRemember(videos, photos);
 }
 
@@ -1816,7 +1992,8 @@ export async function job(ctx) {
 // ni deja historial: los títulos siguen siendo 18+ como el resto del plugin.
 // ---------------------------------------------------------------------------
 
-var TOPIC_CHIPS = ["#anime", "cosplay", "#gaming", "música", "deportes", "#cine", "tráiler", "noticias"];
+// Sin chips de sugerencias a propósito: la pantalla abre con el feed del
+// catálogo, que ya muestra lo que hay; el buscador filtra ahí mismo.
 
 // Cuántos resultados guarda la pantalla en su estado (el parche de estado
 // admite hasta 64 KB; título, texto recortado e imagen caben de sobra).
@@ -2007,21 +2184,6 @@ export async function screen(arg) {
       labelText: "Buscar",
       labelTextEn: "Search",
       onPressed: { event: "buscar", timeoutMs: 30000 }
-    },
-    {
-      type: "Text",
-      style: "caption",
-      text: "Sugerencias",
-      textEn: "Suggestions"
-    },
-    {
-      type: "Chips",
-      key: "temas",
-      options: TOPIC_CHIPS.map(function (t) {
-        return { value: t, label: t };
-      }),
-      value: typeof inputs.temas === "string" ? inputs.temas : null,
-      onChanged: "tema"
     }
   ];
 
@@ -2093,8 +2255,8 @@ export async function screen(arg) {
       children.push({
         type: "Text",
         style: "caption",
-        text: "Lo último de tu Inicio y tus guardados · toca Buscar para filtrar",
-        textEn: "Latest from your Home and bookmarks · tap Search to filter"
+        text: "Lo último de tu Inicio, tus guardados y tus Me gusta · toca Buscar para filtrar",
+        textEn: "Latest from your Home, bookmarks and Likes · tap Search to filter"
       });
       var feedCards = [];
       for (var f = 0; f < feed.length; f++) feedCards.push(feedCard(feed[f]));
@@ -2105,8 +2267,8 @@ export async function screen(arg) {
         icon: "movie",
         title: "Aún no hay videos cargados",
         titleEn: "No videos loaded yet",
-        text: "Toca «Cargar videos de X» para traer los del Inicio y tus guardados; quedan en el catálogo del plugin y desde ahí se buscan y se ven. También puedes activar el refresco en segundo plano en Ajustes ▸ Twitter/X Media.",
-        textEn: "Tap \"Load videos from X\" to bring the ones from your Home and bookmarks; they stay in the plugin's catalog, where search and this feed read from. You can also turn on the background refresh in Settings."
+        text: "Toca «Cargar videos de X» para traer los del Inicio, tus guardados y tus Me gusta; quedan en el catálogo del plugin y desde ahí se buscan y se ven. También puedes activar el refresco en segundo plano en Ajustes ▸ Twitter/X Media.",
+        textEn: "Tap \"Load videos from X\" to bring the ones from your Home, bookmarks and Likes; they stay in the plugin's catalog, where search and this feed read from. You can also turn on the background refresh in Settings."
       });
       children.push({
         type: "ElevatedButton",
@@ -2135,9 +2297,8 @@ export async function screenEvent(event) {
   // lista completa paginada.
   if (name === "ver" || name === "xweb" || name === "vermas") {
     var results = state.results;
-    if (!results) return null;
     if (name === "vermas") {
-      if (typeof results.raw !== "string" || !results.raw) return null;
+      if (!results || typeof results.raw !== "string" || !results.raw) return null;
       return {
         go: {
           browse: {
@@ -2148,12 +2309,23 @@ export async function screenEvent(event) {
         }
       };
     }
-    var posts = results.posts || [];
+    var posts = (results && results.posts) || [];
     var post = null;
     for (var i = 0; i < posts.length; i++) {
       if (posts[i].id === arg) {
         post = posts[i];
         break;
+      }
+    }
+    if (!post) {
+      // El feed de arranque sale del catálogo y no vive en el estado de la
+      // pantalla: la publicación se busca también allí.
+      var feed = catalogFeed();
+      for (var j = 0; j < feed.length; j++) {
+        if (feed[j].id === arg) {
+          post = feed[j];
+          break;
+        }
       }
     }
     if (!post) {
@@ -2173,12 +2345,22 @@ export async function screenEvent(event) {
           }
         };
       }
+      // Kino enseña su hoja «Abrir un enlace» y abre x.com en el navegador
+      // (en el TV, un QR para escanearlo con el teléfono).
       return { go: { url: { href: post.web, title: post.title.slice(0, 60) } } };
+    }
+    if (!/^t:\d{1,25}:\d{1,2}$/.test(String(post.ref || ""))) {
+      return {
+        toast: {
+          text: "Esta publicación es una foto: ábrela en X",
+          textEn: "This post is a photo: open it on X"
+        }
+      };
     }
     return { go: { title: { ref: post.ref, kind: "movie", id: post.id, title: post.title, adult: true } } };
   }
 
-  if (name !== "buscar" && name !== "tema" && name !== "cargar") return null;
+  if (name !== "buscar" && name !== "cargar") return null;
 
   var inputs = state.inputs || {};
   var q = "";
@@ -2245,11 +2427,6 @@ export async function screenEvent(event) {
     };
   }
   var patch = { results: results, inputs: { q: q } };
-  if (name === "tema") {
-    patch.inputs.temas = q;
-  } else if (typeof inputs.temas === "string") {
-    patch.inputs.temas = inputs.temas;
-  }
   return { state: patch };
 }
 

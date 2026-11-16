@@ -49,12 +49,14 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 
 ## Qué ves en Kino
 
-- **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados y más guardados
-  (los tuits que no traen video se omiten). Las tarjetas **Ver más** abren cada lista completa, paginada.
+- **Inicio**: varias filas — Inicio (Para ti), Más del Inicio, tus videos guardados, más guardados y
+  **tus Me gusta** (los tuits que marcaste con ❤ y traen video; los que no traen video se omiten).
+  Las tarjetas **Ver más** abren cada lista completa, paginada.
 - **Pantalla «Buscar en X»**: entra por el icono de lupa del plugin (barra lateral en el TV, franja de
   plugins en el teléfono) o desde su página de ajustes. **Al abrirse ya muestra un feed**: lo último
-  de tu Inicio («Para ti», las filas que X te sugiere) y de tus guardados, guardado en el catálogo
-  del plugin. El buscador **filtra ese catálogo al instante** y suma lo que cargue de X en el
+  de tu Inicio («Para ti», las filas que X te sugiere), tus guardados y tus Me gusta, guardado en el
+  catálogo del plugin — sin chips ni sugerencias: el feed y el buscador, nada más. El buscador
+  **filtra ese catálogo al instante** y suma lo que cargue de X en el
   momento, en un **feed con scroll al estilo de X**: una tarjeta por
   publicación con su imagen, @autor, fecha, ❤ y vistas, ordenado como la cronología de X (lo más
   nuevo arriba). Además de videos, el feed mezcla las **fotos publicadas** del tópico (tuits de
@@ -88,8 +90,12 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 - X **cambia el identificador de esas consultas** cada tanto. Si eso pasa, el plugin intenta
   descubrir el nuevo leyendo los archivos JavaScript de la propia web de X (`abs.twimg.com`) y lo
   guarda una semana. Si aun así falla, el campo avanzado **Identificador de la API** de los ajustes
-  permite pegarlo a mano: `bookmarks:` seguido del código de la petición «Bookmarks» (visible en
+  permite pegarlo a mano: `bookmarks:` seguido del código de la petición «Bookmarks», o `likes:`
+  seguido del de «Likes» (visibles en
   x.com ▸ F12 ▸ Red).
+- **Los Me gusta** usan la consulta «Likes» de la web de X, cuyo identificador el plugin intenta
+  descubrir en sus archivos (no tiene semilla conocida). Si no lo consigue, la fila «Tus Me gusta»
+  no aparece y la pantalla lo dice; pégalo a mano con `likes:código` y vuelve a entrar.
 - **La búsqueda pública de X está cerrada** para clientes que no son su web o su app oficial: exige
   un sello anti-bot (`x-client-transaction-id`) que su web calcula en el navegador y, aun
   reproduciendo ese cálculo exactamente (se intentó en la 1.8.0, validado contra implementaciones
@@ -120,7 +126,9 @@ compartas con nadie, y ten en cuenta que Kino las sincroniza cifradas con tus ot
 El plugin no tiene servidor propio ni telemetría: no declara `telemetry`, y todo lo que sale del
 aparato va a hosts de X. Las cookies viajan solo a esos hosts, viven en un ajuste `password` de Kino
 (cifrado en el Keystore del aparato y sellado de punta a punta al sincronizarse) y `kino.storage`
-solo guarda el @usuario, el identificador de la consulta y las URLs de tus videos. El estado de la
+solo guarda el @usuario, el identificador de la consulta y las URLs de tus videos. El catálogo
+guarda además títulos, autores, fechas e imágenes de lo cargado — nunca URLs de video, que caducan.
+El estado de la
 pantalla «Buscar en X» vive en Kino y se borra con la conversación del plugin; nada de lo que buscas
 o ves se guarda en «Mi biblioteca» ni en «Continuar viendo».
 
